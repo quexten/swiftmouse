@@ -1,0 +1,16 @@
+[package]
+name = "Swiftmouse"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ashpd = { git = "https://github.com/bilelmoussaoui/ashpd", version = "0.9.0" }
+edge-detection = "0.2.6"
+eframe = { version = "0.28.1",  features = [
+  "default",
+  "__screenshot", # __screenshot is so we can dump a screenshot using EFRAME_SCREENSHOT_TO
+]}
+egui_extras = { version = "0.28.1", features = ["default", "all_loaders"] }
+image = "0.25.1"
+imageproc = "0.25.0"
+tokio = { version = "1.38.0", features = ["full"] }
