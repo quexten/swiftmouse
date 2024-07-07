@@ -1,15 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(rustdoc::missing_crate_level_docs)]
-use std::{borrow::Cow, io::{Read, Write}};
+use std::{io::{Read, Write}, sync::{Arc, Mutex}, thread};
 
-use ashpd::{desktop::{device::Device, print, remote_desktop::{self, DeviceType, RemoteDesktop}, screenshot}, WindowIdentifier};
-use eframe::egui::{self, InputState, ViewportCommand};
-use image::{GenericImage, GenericImageView, Pixel};
-use imageproc::definitions::Position;
-use tokio::fs::read;
+use ashpd::{desktop::{remote_desktop::{self, DeviceType, RemoteDesktop}, screenshot}, WindowIdentifier};
+use eframe::egui::{self, InputState};
+use image::GenericImageView;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Taking screenshot");
+    let start_time = std::time::Instant::now();
     let mut screenshot_uri = String::new();
     match screenshot::ScreenshotRequest::default()
         .interactive(false)
@@ -27,48 +27,76 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Failed to take screenshot: {}", err);
         }
     }
+    println!("Elapsed: {:?}", start_time.elapsed());
 
-    println!("reading");
-    let mut screenshot = image::open(screenshot_uri).unwrap();
-    screenshot = screenshot.grayscale();
-    screenshot.save("./screenshot_grayscale.png").unwrap();
+    println!("Converting screenshot to grayscale");
+    let start_time = std::time::Instant::now();
+    let screenshot = image::open(screenshot_uri).unwrap();
+    let screenshot_grayscale = screenshot.grayscale();
+    // screenshot_grayscale.save("/home/quexten/screenshot_grayscale.png").unwrap();
+    println!("Elapsed: {:?}", start_time.elapsed());
+    
     // edge detection
-    screenshot = screenshot.filter3x3(&[
+    println!("Edge detection");
+    let start_time = std::time::Instant::now();
+    let screenshot_edges = screenshot_grayscale.filter3x3(&[
         -1.0, -1.0, -1.0,
         -1.0, 8.0, -1.0,
         -1.0, -1.0, -1.0,
     ]);
-    for x in 0..screenshot.width() {
-        for y in 0..screenshot.height() {
-            if screenshot.get_pixel(x, y) != image::Rgba([0, 0, 0, 0]) {
-                screenshot.put_pixel(x, y, image::Rgba([255, 255, 255, 255]));
+    let mut bitmap = vec![vec![false; screenshot_edges.height() as usize]; screenshot_edges.width() as usize];
+    for x in 0..screenshot_edges.width() {
+        for y in 0..screenshot_edges.height() {
+            if screenshot_edges.get_pixel(x, y) != image::Rgba([0, 0, 0, 0]) {
+                bitmap[x as usize][y as usize] = true;
             }
         }
     }
-    screenshot.save("./edges.png").unwrap();
+    // screenshot_edges.save("./edges.png").unwrap();
+    println!("Elapsed: {:?}", start_time.elapsed());
 
 
-    let mut tiny = screenshot.to_rgb8();
-    let mut boundingBoxes: Vec<(u32, u32, u32, u32)> = Vec::new();
-    let mut visited_bitmap = vec![vec![false; tiny.height() as usize]; tiny.width() as usize];
+    println!("Finding bounding boxes");
+    let start_time = std::time::Instant::now();
+    let bounding_boxes: Arc<Mutex<Vec<(u32, u32, u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut join_handles = Vec::new();
 
-    for x in 0..tiny.width() {
-        println!("x: {}", x);
-        for y in 0..tiny.height() {
-            let bounding_box = get_bounding_box_flood_fill(&mut tiny, x, y, &mut visited_bitmap);
-            match bounding_box {
-                Some(bb) => {
-                    // println!("{:?}", bb);
-                    boundingBoxes.push(bb);
-                },
-                None => {
-                    //println!("Failed to get bounding box");
+    let num_threads = 16;
+    for i in 0..num_threads {
+        let local_bitmap = bitmap.clone();
+        let start_x = bitmap.len() as u32 / num_threads * i;
+        let end_x = bitmap.len() as u32 / num_threads * (i+1);
+        let bb1 = bounding_boxes.clone();
+        let join_handle = thread::spawn(move || {
+            let mut visited_bitmap = vec![vec![false; local_bitmap[0].len()]; local_bitmap.len()];
+            let local_bitmap_height = local_bitmap[0].len() as u32;
+            for x in start_x..end_x {
+                //println!("Thread {:?} x {:?}", i, x);
+                for y in 0..local_bitmap_height {
+                    //println!("Thread {:?} y {:?}", i, y);
+                    let bounding_box = get_bounding_box_flood_fill(&local_bitmap, x, y as u32, &mut visited_bitmap);
+                    match bounding_box {
+                        Some(bb) => {
+                            let mut bbs = bb1.lock().unwrap();
+                            bbs.push(bb);
+                        },
+                        None => {
+                        }
+                    }
                 }
             }
-        }
+        });
+        join_handles.push(join_handle);
     }
 
-    // extend each bounding box by 3 pixels
+    for joinHandle in join_handles {
+        joinHandle.join().unwrap();
+    }
+    let boundingBoxes = bounding_boxes.lock().unwrap();
+    println!("Elapsed: {:?}", start_time.elapsed());
+
+    println!("Extending bounding boxes");
+    let start_time = std::time::Instant::now();
     let mut extendedBoundingBoxes: Vec<(u32, u32, u32, u32)> = Vec::new();
     for (min_x, min_y, max_x, max_y) in boundingBoxes.clone() {
         let min_x = min_x.saturating_sub(3);
@@ -77,38 +105,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let max_y = max_y.saturating_add(3);
         extendedBoundingBoxes.push((min_x, min_y, max_x, max_y));
     }
+    println!("Elapsed: {:?}", start_time.elapsed());
 
-    let mut debug_img = tiny.clone();
-    for (min_x, min_y, max_x, max_y) in boundingBoxes.clone() {
-        for x in min_x..max_x {
-            for y in min_y..max_y {
-                if x == min_x || x == max_x-1 || y == min_y || y == max_y-1 {
-                    debug_img.put_pixel(x, y, image::Rgb([0, 255, 0]));
-                }
-            }
-        }
-    }
-    debug_img.save("./screenshot_annotated.png").unwrap();
+    println!("Writing debug image");
+    // let start_time = std::time::Instant::now();
+    // let mut debug_img = tiny.clone();
+    // for (min_x, min_y, max_x, max_y) in boundingBoxes.clone() {
+    //     for x in min_x..max_x {
+    //         for y in min_y..max_y {
+    //             if x == min_x || x == max_x-1 || y == min_y || y == max_y-1 {
+    //                 debug_img.put_pixel(x, y, image::Rgb([0, 255, 0]));
+    //             }
+    //         }
+    //     }
+    // }
+    // debug_img.save("/home/quexten/screenshot_annotated.png").unwrap();
+    println!("Elapsed: {:?}", start_time.elapsed());
 
+    println!("Merging bounding boxes");
+    let start_time = std::time::Instant::now();
     let mergedBoundingBoxes = merge_overlapping_bounding_boxes(extendedBoundingBoxes);
     println!("Merged bounding boxes {:?}", mergedBoundingBoxes.len());
+    println!("Elapsed: {:?}", start_time.elapsed());
 
+    println!("Writing debug image");
+    // let start_time = std::time::Instant::now();
+    // for (min_x, min_y, max_x, max_y) in mergedBoundingBoxes.clone() {
+    //     for x in min_x..max_x {
+    //         for y in min_y..max_y {
+    //             if x < 0 || y < 0 || x >= debug_img.width() || y >= debug_img.height() {
+    //                 continue;
+    //             }
+    //
+    //             let color = image::Rgb([255, 0, 0]);
+    //             if x == min_x || x == max_x-1 || y == min_y || y == max_y-1 {
+    //                 debug_img.put_pixel(x, y, color);
+    //             }
+    //         }
+    //     }
+    // }
+    // debug_img.save("/home/quexten/screenshot_annotated_merged.png").unwrap();
+    println!("Elapsed: {:?}", start_time.elapsed());
+
+    println!("Writing output image");
+    let start_time = std::time::Instant::now();
+    let mut output_image= screenshot_grayscale.clone().to_rgb8();
     for (min_x, min_y, max_x, max_y) in mergedBoundingBoxes.clone() {
         for x in min_x..max_x {
             for y in min_y..max_y {
-                if x < 0 || y < 0 || x >= debug_img.width() || y >= debug_img.height() {
+                if x < 0 || y < 0 || x >= output_image.width() || y >= output_image.height() {
                     continue;
                 }
 
-                let color = image::Rgb([255, 0, 0]);
+                let color = image::Rgb([0, 100, 100]);
                 if x == min_x || x == max_x-1 || y == min_y || y == max_y-1 {
-                    debug_img.put_pixel(x, y, color);
+                    output_image.put_pixel(x, y, color);
                 }
             }
         }
     }
+    output_image.save("/home/quexten/out.png").unwrap();
+    println!("Elapsed: {:?}", start_time.elapsed());
 
-    debug_img.save("./screenshot_annotated_merged.png").unwrap();
+    println!("Showing GUI");
     show_gui(mergedBoundingBoxes);
     Ok(())
 }
@@ -124,7 +183,6 @@ fn merge_overlapping_bounding_boxes(boundingBoxes: Vec<(u32, u32, u32, u32)>) ->
             continue;
         }
         visited_list[i] = true;
-        println!("visited {:?}", i);
         let mut current_bb = *boundingBox;
 
         let mut did_merge_local = false;
@@ -137,10 +195,8 @@ fn merge_overlapping_bounding_boxes(boundingBoxes: Vec<(u32, u32, u32, u32)>) ->
                 current_bb = merge_bounds(current_bb, *boundingBox2);
                 did_merge = true;
                 did_merge_local = true;
-                println!("merging {:?} with {:?}", boundingBox, boundingBox2);
             }
         }
-        println!("merged {:?}", did_merge_local);
 
         mergedBoundingBoxes.push(current_bb);
     }
@@ -187,26 +243,24 @@ fn merge_bounds(a: (u32, u32, u32, u32), b: (u32, u32, u32, u32)) -> (u32, u32, 
     (min_x, min_y, max_x, max_y)
 }
 
-fn get_bounding_box_flood_fill(image: &mut image::ImageBuffer<image::Rgb<u8>, Vec<u8>>, x: u32, y: u32, visited_bitmap: &mut Vec<Vec<bool>>) -> Option<(u32, u32, u32, u32)> {
+fn get_bounding_box_flood_fill(bitmap: &Vec<Vec<bool>>, x: u32, y: u32, visited_bitmap: &mut Vec<Vec<bool>>) -> Option<(u32, u32, u32, u32)> {
     let mut min_x = x;
     let mut max_x = x;
     let mut min_y = y;
     let mut max_y = y;
 
-    let starting_color = image.get_pixel(x, y).clone();
-    
     let mut open: Vec<(u32, u32)> = Vec::new();
     open.push((x, y));
     let mut pixel_count = 0;
     let mut visited: Vec<(u32, u32)> = Vec::new();
 
     while let Some((x, y)) = open.pop() {
-        if x >= image.width() || y >= image.height() || x == 0 || y == 0 {
+        if x >= bitmap.len() as u32 || y >= bitmap[0].len() as u32 || x == 0 || y == 0 {
             continue;
         }
 
         // skip non edges
-        if *image.get_pixel(x, y) != image::Rgb([255, 255, 255]) {
+        if !bitmap[x as usize][y as usize] {
             continue;
         }
 
@@ -238,22 +292,12 @@ fn get_bounding_box_flood_fill(image: &mut image::ImageBuffer<image::Rgb<u8>, Ve
         visited.push((x, y));
 
         if pixel_count > 500 {
-            for (x, y) in visited {
-                //image.put_pixel(x, y, image::Rgb([0, 0, 255]));
-            }
             return None
         }
     }
 
-    let width = max_x - min_x;
-    let height = max_y - min_y;
-
     if pixel_count < 5 {
         return None
-    }
-
-    for (x, y) in visited {
-        //image.put_pixel(x, y, image::Rgb([0, 255, 0]));
     }
 
     Some((min_x, min_y, max_x, max_y))
@@ -386,22 +430,21 @@ impl eframe::App for MyApp {
                 let index = get_index_for_letters(self.first_letter_typed as u8, self.second_letter_typed as u8);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 let (min_x, min_y, max_x, max_y) = self.positions[index as usize];
-                println!("Clicking at: {:?} {:?}", min_x, min_y);
                 tokio::spawn(async move {
-                    autoclick_at(min_x as i32, min_y as i32, 3840, 2160).await.unwrap();
+                    // click to center of box
+                    let click_x = (min_x + max_x) / 2;
+                    let click_y = (min_y + max_y) / 2;
+
+                    autoclick_at(click_x as i32, click_y as i32, 3840, 2160).await.unwrap();
                     // exit
                     std::process::exit(0);
                 });
     
             }
 
-
-            
             ui.add(
-                egui::Image::new("file://./screenshot_grayscale.png"),
+                egui::Image::new("file:///home/quexten/out.png"),
             );
-            // });
-            // label with background box
 
             for ((min_x, min_y, max_x, max_y), index) in self.positions.iter().zip(0..) {
                 let (letter1, letter2) = get_letters_for_index(index);
