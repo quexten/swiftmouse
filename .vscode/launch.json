@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'img'",
+            "name": "Debug executable 'swiftmouse'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=img",
-                    "--package=img"
+                    "--bin=swiftmouse",
+                    "--package=swiftmouse"
                 ],
                 "filter": {
-                    "name": "img",
+                    "name": "swiftmouse",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'img'",
+            "name": "Debug unit tests in executable 'swiftmouse'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=img",
-                    "--package=img"
+                    "--bin=swiftmouse",
+                    "--package=swiftmouse"
                 ],
                 "filter": {
-                    "name": "img",
+                    "name": "swiftmouse",
                     "kind": "bin"
                 }
             },

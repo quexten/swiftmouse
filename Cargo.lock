@@ -3,19 +3,6 @@
 version = 3
 
 [[package]]
-name = "Swiftmouse"
-version = "0.1.0"
-dependencies = [
- "ashpd",
- "edge-detection",
- "eframe",
- "egui_extras",
- "image 0.25.1",
- "imageproc",
- "tokio",
-]
-
-[[package]]
 name = "ab_glyph"
 version = "0.2.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3548,6 +3535,19 @@ checksum = "6e44e288cd960318917cbd540340968b90becc8bc81f171345d706e7a89d9d70"
 dependencies = [
  "kurbo",
  "siphasher",
+]
+
+[[package]]
+name = "swiftmouse"
+version = "0.1.0"
+dependencies = [
+ "ashpd",
+ "edge-detection",
+ "eframe",
+ "egui_extras",
+ "image 0.25.1",
+ "imageproc",
+ "tokio",
 ]
 
 [[package]]

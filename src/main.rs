@@ -1,13 +1,40 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(rustdoc::missing_crate_level_docs)]
-use std::{io::{Read, Write}, sync::{Arc, Mutex}, thread};
+use std::{borrow::BorrowMut, io::{Read, Write}, sync::{Arc, Mutex}, thread};
 
 use ashpd::{desktop::{remote_desktop::{self, DeviceType, RemoteDesktop}, screenshot}, WindowIdentifier};
 use eframe::egui::{self, InputState};
-use image::GenericImageView;
+use image::{DynamicImage, GenericImageView};
+
+#[derive(Debug, Clone, Copy, Default)]
+enum ClickType {
+    #[default]
+    Left,
+    Right,
+    Middle,
+    Double,
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // get clicktype from params command params
+    let mut click_type = ClickType::Left;
+    let args = std::env::args().collect::<Vec<String>>();
+    for arg in args {
+        if arg == "left" {
+            click_type = ClickType::Left;
+        } else if arg == "right" {
+            click_type = ClickType::Right;
+        } else if arg == "middle" {
+            click_type = ClickType::Middle;
+        } else if arg == "double" {
+            click_type = ClickType::Double;
+        }
+    }
+
+    println!("Click type: {:?}", click_type);
+
+
     println!("Taking screenshot");
     let start_time = std::time::Instant::now();
     let mut screenshot_uri = String::new();
@@ -29,33 +56,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Elapsed: {:?}", start_time.elapsed());
 
-    println!("Converting screenshot to grayscale");
+    println!("Opening screenshot");
     let start_time = std::time::Instant::now();
     let screenshot = image::open(screenshot_uri).unwrap();
-    let screenshot_grayscale = screenshot.grayscale();
-    // screenshot_grayscale.save("/home/quexten/screenshot_grayscale.png").unwrap();
     println!("Elapsed: {:?}", start_time.elapsed());
     
-    // edge detection
-    println!("Edge detection");
-    let start_time = std::time::Instant::now();
-    let screenshot_edges = screenshot_grayscale.filter3x3(&[
-        -1.0, -1.0, -1.0,
-        -1.0, 8.0, -1.0,
-        -1.0, -1.0, -1.0,
-    ]);
-    let mut bitmap = vec![vec![false; screenshot_edges.height() as usize]; screenshot_edges.width() as usize];
-    for x in 0..screenshot_edges.width() {
-        for y in 0..screenshot_edges.height() {
-            if screenshot_edges.get_pixel(x, y) != image::Rgba([0, 0, 0, 0]) {
-                bitmap[x as usize][y as usize] = true;
-            }
-        }
-    }
-    // screenshot_edges.save("./edges.png").unwrap();
-    println!("Elapsed: {:?}", start_time.elapsed());
-
-
     println!("Finding bounding boxes");
     let start_time = std::time::Instant::now();
     let bounding_boxes: Arc<Mutex<Vec<(u32, u32, u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -63,18 +68,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let num_threads = 16;
     for i in 0..num_threads {
-        let local_bitmap = bitmap.clone();
-        let start_x = bitmap.len() as u32 / num_threads * i;
-        let end_x = bitmap.len() as u32 / num_threads * (i+1);
+        let local_screenshot = screenshot.clone();
+        let start_x = local_screenshot.width() as u32 / num_threads * i;
+        let end_x = local_screenshot.width() as u32 / num_threads * (i+1);
         let bb1 = bounding_boxes.clone();
         let join_handle = thread::spawn(move || {
-            let mut visited_bitmap = vec![vec![false; local_bitmap[0].len()]; local_bitmap.len()];
-            let local_bitmap_height = local_bitmap[0].len() as u32;
+            let mut visited_bitmap = vec![vec![false; local_screenshot.height() as usize]; local_screenshot.width() as usize];
+            let local_bitmap_height = local_screenshot.height() as u32;
             for x in start_x..end_x {
                 //println!("Thread {:?} x {:?}", i, x);
                 for y in 0..local_bitmap_height {
                     //println!("Thread {:?} y {:?}", i, y);
-                    let bounding_box = get_bounding_box_flood_fill(&local_bitmap, x, y as u32, &mut visited_bitmap);
+                    let bounding_box = get_bounding_box_flood_fill(&local_screenshot, x, y as u32, &mut visited_bitmap);
                     match bounding_box {
                         Some(bb) => {
                             let mut bbs = bb1.lock().unwrap();
@@ -94,6 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let boundingBoxes = bounding_boxes.lock().unwrap();
     println!("Elapsed: {:?}", start_time.elapsed());
+    println!("Found {:?} bounding boxes", boundingBoxes.len());
 
     println!("Extending bounding boxes");
     let start_time = std::time::Instant::now();
@@ -107,7 +113,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!("Elapsed: {:?}", start_time.elapsed());
 
-    println!("Writing debug image");
+    // println!("Writing debug image");
     // let start_time = std::time::Instant::now();
     // let mut debug_img = tiny.clone();
     // for (min_x, min_y, max_x, max_y) in boundingBoxes.clone() {
@@ -119,8 +125,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //         }
     //     }
     // }
-    // debug_img.save("/home/quexten/screenshot_annotated.png").unwrap();
-    println!("Elapsed: {:?}", start_time.elapsed());
+    // debug_img.save("/tmp/screenshot_annotated.png").unwrap();
+    // println!("Elapsed: {:?}", start_time.elapsed());
+
+    println!("Filter out big boxes");
+    let start_time = std::time::Instant::now();
+    let mut filteredBoundingBoxes: Vec<(u32, u32, u32, u32)> = Vec::new();
+    for (min_x, min_y, max_x, max_y) in extendedBoundingBoxes.clone() {
+        if (max_x - min_x) < 100 && (max_y - min_y) < 100 {
+            filteredBoundingBoxes.push((min_x, min_y, max_x, max_y));
+        }
+    }
+    println!("Filtered bounding boxes {:?}", filteredBoundingBoxes.len());
 
     println!("Merging bounding boxes");
     let start_time = std::time::Instant::now();
@@ -144,12 +160,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //         }
     //     }
     // }
-    // debug_img.save("/home/quexten/screenshot_annotated_merged.png").unwrap();
+    // debug_img.save("/tmp/screenshot_annotated_merged.png").unwrap();
     println!("Elapsed: {:?}", start_time.elapsed());
 
     println!("Writing output image");
     let start_time = std::time::Instant::now();
-    let mut output_image= screenshot_grayscale.clone().to_rgb8();
+    let mut output_image= screenshot.clone().to_rgb8();
     for (min_x, min_y, max_x, max_y) in mergedBoundingBoxes.clone() {
         for x in min_x..max_x {
             for y in min_y..max_y {
@@ -164,11 +180,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    output_image.save("/home/quexten/out.png").unwrap();
+    output_image.save("/tmp/out.png").unwrap();
     println!("Elapsed: {:?}", start_time.elapsed());
 
     println!("Showing GUI");
-    show_gui(mergedBoundingBoxes);
+    show_gui(mergedBoundingBoxes, click_type);
     Ok(())
 }
 
@@ -196,6 +212,11 @@ fn merge_overlapping_bounding_boxes(boundingBoxes: Vec<(u32, u32, u32, u32)>) ->
                 did_merge = true;
                 did_merge_local = true;
             }
+        }
+
+        // discard if width and height are less are more than 100
+        if (current_bb.2 - current_bb.0) > 100 && (current_bb.3 - current_bb.1) > 100 {
+            continue;
         }
 
         mergedBoundingBoxes.push(current_bb);
@@ -243,7 +264,12 @@ fn merge_bounds(a: (u32, u32, u32, u32), b: (u32, u32, u32, u32)) -> (u32, u32, 
     (min_x, min_y, max_x, max_y)
 }
 
-fn get_bounding_box_flood_fill(bitmap: &Vec<Vec<bool>>, x: u32, y: u32, visited_bitmap: &mut Vec<Vec<bool>>) -> Option<(u32, u32, u32, u32)> {
+fn get_pixel_grayscale(image: &DynamicImage, x: u32, y: u32) -> i32 {
+    let [r,g,b,a] = image.get_pixel(x, y).0;
+    (r as u32 + g as u32 + b as u32) as i32
+}
+
+fn get_bounding_box_flood_fill(image: &DynamicImage, x: u32, y: u32, visited_bitmap: &mut Vec<Vec<bool>>) -> Option<(u32, u32, u32, u32)> {
     let mut min_x = x;
     let mut max_x = x;
     let mut min_y = y;
@@ -255,12 +281,16 @@ fn get_bounding_box_flood_fill(bitmap: &Vec<Vec<bool>>, x: u32, y: u32, visited_
     let mut visited: Vec<(u32, u32)> = Vec::new();
 
     while let Some((x, y)) = open.pop() {
-        if x >= bitmap.len() as u32 || y >= bitmap[0].len() as u32 || x == 0 || y == 0 {
+        if x >= image.width()-1 as u32 || y >= image.height()-1 as u32 || x <= 1 || y <= 1 {
             continue;
         }
 
-        // skip non edges
-        if !bitmap[x as usize][y as usize] {
+        let edge_pixel = get_pixel_grayscale(image, x, y) * 4
+            + -1 * get_pixel_grayscale(image, x, y+1)
+            + -1 * get_pixel_grayscale(image, x-1, y)
+            + -1 * get_pixel_grayscale(image, x+1, y)
+            + -1 * get_pixel_grayscale(image, x, y-1);
+        if edge_pixel < 100 { 
             continue;
         }
 
@@ -303,13 +333,14 @@ fn get_bounding_box_flood_fill(bitmap: &Vec<Vec<bool>>, x: u32, y: u32, visited_
     Some((min_x, min_y, max_x, max_y))
 }
 
-fn show_gui(mut positions: Vec<(u32, u32, u32, u32)>) {
+fn show_gui(mut positions: Vec<(u32, u32, u32, u32)>, click_type: ClickType) {
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 800.0]),
         ..Default::default()
     };
     options.viewport.fullscreen = Some(true);
     // options.viewport.maximized = Some(true);
+    let heap_click_type = Arc::new(click_type);
     eframe::run_native(
         "Image Viewer",
         options,
@@ -318,6 +349,7 @@ fn show_gui(mut positions: Vec<(u32, u32, u32, u32)>) {
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut app = Box::<MyApp>::default();
             app.positions = positions;
+            app.click_type = Arc::try_unwrap(heap_click_type).unwrap();
             app.first_letter_typed = -1;
             app.second_letter_typed = -1;
             Ok(app)
@@ -330,6 +362,7 @@ struct MyApp {
     positions: Vec<(u32, u32, u32, u32)>,
     first_letter_typed: i32,
     second_letter_typed: i32,
+    click_type: ClickType,
 }
 
 fn get_key(i: &InputState) -> Option<i32> {
@@ -430,12 +463,13 @@ impl eframe::App for MyApp {
                 let index = get_index_for_letters(self.first_letter_typed as u8, self.second_letter_typed as u8);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 let (min_x, min_y, max_x, max_y) = self.positions[index as usize];
+                let click_type = self.click_type;
                 tokio::spawn(async move {
                     // click to center of box
                     let click_x = (min_x + max_x) / 2;
                     let click_y = (min_y + max_y) / 2;
 
-                    autoclick_at(click_x as i32, click_y as i32, 3840, 2160).await.unwrap();
+                    autoclick_at(click_x as i32, click_y as i32, 3840, 2160, click_type).await.unwrap();
                     // exit
                     std::process::exit(0);
                 });
@@ -443,7 +477,7 @@ impl eframe::App for MyApp {
             }
 
             ui.add(
-                egui::Image::new("file:///home/quexten/out.png"),
+                egui::Image::new("file:///tmp/out.png"),
             );
 
             for ((min_x, min_y, max_x, max_y), index) in self.positions.iter().zip(0..) {
@@ -464,9 +498,7 @@ impl eframe::App for MyApp {
     }
 }
 
-
-
-async fn autoclick_at(x: i32, y: i32, screen_width: i32, screen_height: i32) -> Result<(), Box<dyn std::error::Error>> {
+async fn autoclick_at(x: i32, y: i32, screen_width: i32, screen_height: i32, click_type: ClickType) -> Result<(), Box<dyn std::error::Error>> {
     // autotype portal
     let proxy = RemoteDesktop::new().await?;
     let session = proxy.create_session().await?;
@@ -497,10 +529,37 @@ async fn autoclick_at(x: i32, y: i32, screen_width: i32, screen_height: i32) -> 
     proxy.notify_pointer_motion(&session, (x - screen_width) as f64, (y - screen_height) as f64).await?;
     // sleep
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    proxy.notify_pointer_button(&session, 272, remote_desktop::KeyState::Pressed).await?;
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-    proxy.notify_pointer_button(&session, 272, remote_desktop::KeyState::Released).await?;
+    
+    let left_click = 272;
+    let right_click = 273;
+    let middle_click = 274;
 
+    match click_type {
+        ClickType::Left => {
+            proxy.notify_pointer_button(&session, left_click, remote_desktop::KeyState::Pressed).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            proxy.notify_pointer_button(&session, left_click, remote_desktop::KeyState::Released).await?;
+        }
+        ClickType::Right => {
+            proxy.notify_pointer_button(&session, right_click, remote_desktop::KeyState::Pressed).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            proxy.notify_pointer_button(&session, right_click, remote_desktop::KeyState::Released).await?;
+        }
+        ClickType::Middle => {
+            proxy.notify_pointer_button(&session, middle_click, remote_desktop::KeyState::Pressed).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            proxy.notify_pointer_button(&session, middle_click, remote_desktop::KeyState::Released).await?;
+        }
+        ClickType::Double => {
+            proxy.notify_pointer_button(&session, left_click, remote_desktop::KeyState::Pressed).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            proxy.notify_pointer_button(&session, left_click, remote_desktop::KeyState::Released).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            proxy.notify_pointer_button(&session, left_click, remote_desktop::KeyState::Pressed).await?;
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            proxy.notify_pointer_button(&session, left_click, remote_desktop::KeyState::Released).await?;
+        }
+    }
     Ok(())
 }
 
