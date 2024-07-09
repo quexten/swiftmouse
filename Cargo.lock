@@ -3547,6 +3547,7 @@ dependencies = [
  "egui_extras",
  "image 0.25.1",
  "imageproc",
+ "once_cell",
  "tokio",
 ]
 
