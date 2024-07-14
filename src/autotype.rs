@@ -1,7 +1,7 @@
-use std::{future::IntoFuture, io::{Read, Write}, sync::Arc};
+use std::{future::IntoFuture, io::{Read, Write}};
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
-use ashpd::{desktop::{remote_desktop::{self, DeviceType, RemoteDesktop}, Session}, zbus::blocking::proxy, WindowIdentifier};
+use ashpd::{desktop::{remote_desktop::{self, DeviceType, RemoteDesktop}, Session}, WindowIdentifier};
 
 static REMOTEDESKTOP: Lazy<Mutex<Option<RemoteDesktopSession>>> = Lazy::new(|| Mutex::new(None));
 

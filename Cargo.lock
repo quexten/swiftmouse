@@ -3548,6 +3548,7 @@ dependencies = [
  "image 0.25.1",
  "imageproc",
  "once_cell",
+ "rayon",
  "tokio",
 ]
 

@@ -1,10 +1,10 @@
-use std::{os::unix::process, sync::Arc};
+use std::sync::Arc;
 
 use eframe::egui::{self, InputState};
 
 use crate::autotype::{self, ClickType};
 
-pub(crate) fn show_gui(mut positions: Vec<(u32, u32, u32, u32)>, width: u32, height: u32, path: String) {
+pub(crate) fn show_gui(positions: Vec<(u32, u32, u32, u32)>, width: u32, height: u32, path: String) {
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 800.0]),
         ..Default::default()
@@ -13,11 +13,10 @@ pub(crate) fn show_gui(mut positions: Vec<(u32, u32, u32, u32)>, width: u32, hei
     // options.viewport.maximized = Some(true);
     let heap_width = Arc::new(width);
     let heap_height = Arc::new(height);
-    eframe::run_native(
-        "Image Viewer",
+    let _ = eframe::run_native(
+        "Swiftmouse",
         options,
         Box::new(|cc| {
-            // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut app = Box::<MyApp>::default();
             app.positions = positions;
@@ -150,9 +149,11 @@ impl eframe::App for MyApp {
         let frame = egui::Frame::default().fill(egui::Color32::from_rgb(0, 0, 0)).inner_margin(0.0);
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             if key_to_click.is_some() {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                 let click_type = key_to_click.unwrap();
                 tokio::spawn(async move {
+                    // sleep
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     autotype::click(click_type).await;
                     std::process::exit(0);
                 });
@@ -186,6 +187,16 @@ impl eframe::App for MyApp {
                 if self.letters_typed.len() == 0 || self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == letter1 {
                     // color magenta if letter2 matches
                     let color = if self.letters_typed.len() == 2 && self.letters_typed[1] as u8 == letter2 {
+                        // draw half transparent box
+                        ui.painter().rect(
+                            egui::Rect::from_min_max(
+                                egui::pos2(*min_x as f32, *min_y as f32),
+                                egui::pos2(*max_x as f32, *max_y as f32),
+                            ),
+                            0.0,
+                            egui::Color32::from_rgba_premultiplied(200, 0, 100, 10),
+                            egui::Stroke::default()
+                        );
                         egui::Color32::from_rgb(200, 0, 100)
                     } else {
                         if self.letters_typed.len() == 2 {

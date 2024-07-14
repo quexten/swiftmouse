@@ -15,25 +15,26 @@ const SCREENSHOT_PATH: &str = "/tmp/screenshot.png";
 async fn main() {
     println!("[Main] Taking screenshot");
     let start_time = std::time::Instant::now();
-    let screenshot_uri = match screenshot::screenshot().await {
-        Ok(uri) => uri,
-        Err(err) => {
-            println!("[Main] Failed to take screenshot: {:?}", err);
-            return;
-        }
-    };
+    // let screenshot_uri = match screenshot::screenshot().await {
+    //     Ok(uri) => uri,
+    //     Err(err) => {
+    //         println!("[Main] Failed to take screenshot: {:?}", err);
+    //         return;
+    //     }
+    // };
+    let screenshot_uri = "/home/quexten/screenshot_5.png";
     println!("[Main] Elapsed: {:?}", start_time.elapsed());
 
     println!("[Main] Opening screenshot");
     let start_time = std::time::Instant::now();
     let screenshot = image::open(screenshot_uri.clone()).unwrap();
     std::fs::copy(screenshot_uri.clone(), SCREENSHOT_PATH).unwrap();
-    std::fs::remove_file(screenshot_uri).unwrap();
+    // std::fs::remove_file(screenshot_uri).unwrap();
     println!("[Main] Elapsed: {:?}", start_time.elapsed());
 
     println!("[Main] Finding bounding boxes");
     let start_time = std::time::Instant::now();
-    let bounding_boxes = find_bounding_boxes(&screenshot);
+    let bounding_boxes = bounding_box::find_bounding_boxes_v2(&screenshot);
     println!("[Main] Elapsed: {:?}", start_time.elapsed());
     println!("[Main] Found {:?} bounding boxes", bounding_boxes.len());
 
