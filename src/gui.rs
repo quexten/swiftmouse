@@ -4,7 +4,7 @@ use eframe::egui::{self, InputState};
 
 use crate::autotype::{self, ClickType};
 
-pub(crate) fn show_gui(positions: Vec<(u32, u32, u32, u32)>, width: u32, height: u32, path: String) {
+pub(crate) fn show_gui(positions: Vec<(u32, u32, u32, u32)>, big_boxes: Vec<(u32, u32, u32, u32)>, width: u32, height: u32, path: String) {
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 800.0]),
         ..Default::default()
@@ -20,6 +20,7 @@ pub(crate) fn show_gui(positions: Vec<(u32, u32, u32, u32)>, width: u32, height:
             egui_extras::install_image_loaders(&cc.egui_ctx);
             let mut app = Box::<MyApp>::default();
             app.positions = positions;
+            app.big_boxes = big_boxes;
             app.width = Arc::try_unwrap(heap_width).unwrap();
             app.height = Arc::try_unwrap(heap_height).unwrap();
             app.path = path;
@@ -32,6 +33,7 @@ pub(crate) fn show_gui(positions: Vec<(u32, u32, u32, u32)>, width: u32, height:
 #[derive(Default)]
 struct MyApp {
     positions: Vec<(u32, u32, u32, u32)>,
+    big_boxes: Vec<(u32, u32, u32, u32)>,
     letters_typed: Vec<u32>,
     width: u32,
     height: u32,
@@ -162,7 +164,11 @@ impl eframe::App for MyApp {
             if self.letters_typed.len() == 2 {
                 let index = get_index_for_letters(self.letters_typed[0] as u8, self.letters_typed[1] as u8);
                 // ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                let (min_x, min_y, max_x, max_y) = self.positions[index as usize];
+                let (min_x, min_y, max_x, max_y) = if index < self.positions.len() as i32 {
+                    self.positions[index as usize]
+                } else {
+                    self.big_boxes[(index - self.positions.len() as i32) as usize]
+                };
                 let width = self.width;
                 let height = self.height;
                 tokio::spawn(async move {
@@ -178,6 +184,51 @@ impl eframe::App for MyApp {
             ui.add(
                 egui::Image::new("file://".to_owned() + &self.path)
             );
+
+            for ((min_x, min_y, max_x, max_y), index) in self.big_boxes.iter().zip(0..) {
+                let box_index = index as u32 + self.positions.len() as u32;
+                let (letter1, letter2) = get_letters_for_index(box_index as i32);
+                let letter1char = std::char::from_u32(letter1 as u32 + 65).unwrap();
+                let letter2char = std::char::from_u32(letter2 as u32 + 65).unwrap();
+
+                if self.letters_typed.len() == 0 || self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == letter1 {
+                    // color magenta if letter2 matches
+                    let color = if self.letters_typed.len() == 2 && self.letters_typed[1] as u8 == letter2 {
+                        // draw half transparent box
+                        ui.painter().rect(
+                            egui::Rect::from_min_max(
+                                egui::pos2(*min_x as f32, *min_y as f32),
+                                egui::pos2(*max_x as f32, *max_y as f32),
+                            ),
+                            0.0,
+                            egui::Color32::from_rgba_premultiplied(200, 0, 100, 10),
+                            egui::Stroke::default()
+                        );
+                        egui::Color32::from_rgb(200, 0, 100)
+                    } else {
+                        if self.letters_typed.len() == 2 {
+                            egui::Color32::from_rgb(100, 100, 100)
+                        } else {
+                            egui::Color32::from_rgb(250, 80, 50)
+                        }
+                    };
+                    ui.painter().rect_stroke(
+                        egui::Rect::from_min_max(
+                            egui::pos2(*min_x as f32, *min_y as f32),
+                            egui::pos2(*max_x as f32, *max_y as f32),
+                        ),
+                        0.0,
+                        egui::Stroke::new(1.0, color),
+                    );
+                    
+                    ui.allocate_ui_at_rect(egui::Rect::from_min_max(
+                        egui::pos2(*min_x as f32, *min_y as f32),
+                        egui::pos2((*min_x + 50) as f32, (*min_y + 50) as f32),
+                    ), |ui| {
+                        ui.label(egui::RichText::new(format!("{}{}", letter1char, letter2char)).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(color));
+                    });
+                }
+            }
 
             for ((min_x, min_y, max_x, max_y), index) in self.positions.iter().zip(0..) {
                 let (letter1, letter2) = get_letters_for_index(index);

@@ -85,8 +85,8 @@ fn boxes_overlap(box1: &(u32, u32, u32, u32), box2: &(u32, u32, u32, u32)) -> bo
     return box1.0 < box2.2 && box1.2 > box2.0 && box1.1 < box2.3 && box1.3 > box2.1;
 }
 
-fn merge_boxes(boxes: Vec<(u32, u32, u32, u32)>, text_merge: bool) -> Vec<(u32, u32, u32, u32)> {
-    println!("Merging boxes {:?}", boxes.len());
+fn merge_boxes(boxes: Vec<(u32, u32, u32, u32)>, x_padding: u32, y_padding: u32) -> Vec<(u32, u32, u32, u32)> {
+    // println!("Merging boxes {:?}", boxes.len());
     let mut boxes = boxes.clone();
     let mut merged_boxes = Vec::new();
     // merge two boxes if they overlap, while there are overlapping boxes remaining
@@ -104,13 +104,11 @@ fn merge_boxes(boxes: Vec<(u32, u32, u32, u32)>, text_merge: bool) -> Vec<(u32, 
                 let mut start_x1_cmp = start_x1.clone();
                 let mut end_x1_cmp = end_x1.clone();
 
-                if text_merge {
-                    let padding = 3;
-                    start_x_cmp = start_x - padding;
-                    end_x_cmp = end_x + padding;
-                    start_x1_cmp = start_x1 - padding;
-                    end_x1_cmp = end_x1 + padding;
-                }
+                start_x_cmp = start_x - x_padding;
+                end_x_cmp = end_x + x_padding;
+                start_x1_cmp = start_x1 - y_padding;
+                end_x1_cmp = end_x1 + y_padding;
+
                 if boxes_overlap(&(start_x_cmp, *start_y, end_x_cmp, *end_y), &(start_x1_cmp, *start_y1, end_x1_cmp, *end_y1)) {
                     let new_box = (
                         cmp::min(*start_x, *start_x1),
@@ -140,8 +138,81 @@ fn merge_boxes(boxes: Vec<(u32, u32, u32, u32)>, text_merge: bool) -> Vec<(u32, 
         }
     }
 
-    println!("Merged boxes {:?}", boxes.len());
+    // println!("Merged boxes {:?}", boxes.len());
     return boxes;
+}
+
+fn remove_box_padding(img: &DynamicImage, boxes: Vec<(u32, u32, u32, u32)>) -> Vec<(u32, u32, u32, u32)> {
+    boxes.iter()
+        .map(|(start_x, start_y, end_x, end_y)| {
+            // for each side, remove the rows / columns that are fully the same color
+            let mut new_start_x = start_x.clone();
+            let mut new_start_y = start_y.clone();
+            let mut new_end_x = end_x.clone();
+            let mut new_end_y = end_y.clone();
+
+            for i in *start_x..*end_x {
+                let mut same_color = true;
+                for j in *start_y..*end_y {
+                    if img.get_pixel(i, j) != img.get_pixel(new_start_x, new_start_y) {
+                        same_color = false;
+                        break;
+                    }
+                }
+                if same_color {
+                    new_start_x += 1;
+                } else {
+                    break;
+                }
+            }
+
+            for i in (*start_x..*end_x).rev() {
+                let mut same_color = true;
+                for j in *start_y..*end_y {
+                    if img.get_pixel(i, j) != img.get_pixel(new_end_x, new_end_y) {
+                        same_color = false;
+                        break;
+                    }
+                }
+                if same_color {
+                    new_end_x -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            for j in *start_y..*end_y {
+                let mut same_color = true;
+                for i in *start_x..*end_x {
+                    if img.get_pixel(i, j) != img.get_pixel(new_start_x, new_start_y) {
+                        same_color = false;
+                        break;
+                    }
+                }
+                if same_color {
+                    new_start_y += 1;
+                } else {
+                    break;
+                }
+            }
+
+            for j in (*start_y..*end_y).rev() {
+                let mut same_color = true;
+                for i in *start_x..*end_x {
+                    if img.get_pixel(i, j) != img.get_pixel(new_end_x, new_end_y) {
+                        same_color = false;
+                        break;
+                    }
+                }
+                if same_color {
+                    new_end_y -= 1;
+                } else {
+                    break;
+                }
+            }
+
+            return (new_start_x, new_start_y, new_end_x, new_end_y);
+        }).collect()
 }
 
 // drop out parent boxes that contain other boxes
@@ -165,6 +236,27 @@ fn filter_parents(boxes: Vec<(u32, u32, u32, u32)>) -> Vec<(u32, u32, u32, u32)>
 
     return filtered_boxes;
 
+}
+
+fn filter_children(boxes: Vec<(u32, u32, u32, u32)>) -> Vec<(u32, u32, u32, u32)> {
+    let mut filtered_boxes = Vec::new();
+    for (start_x, start_y, end_x, end_y) in boxes.iter() {
+        let mut is_child = false;
+        for (start_x1, start_y1, end_x1, end_y1) in boxes.iter() {
+            if start_x == start_x1 && start_y == start_y1 && end_x == end_x1 && end_y == end_y1 {
+                continue;
+            }
+            if start_x1 <= start_x && start_y1 <= start_y && end_x1 >= end_x && end_y1 >= end_y {
+                is_child = true;
+                break;
+            }
+        }
+        if !is_child {
+            filtered_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
+        }
+    }
+
+    return filtered_boxes;
 }
 
 #[derive(Debug,PartialEq,Copy,Clone)]
@@ -313,7 +405,7 @@ fn deduplicate_captured_edges(edges: &Vec<Vec<(u32, u32, EdgeType)>>) -> Vec<Vec
     return deduplicated_edges;
 }
 
-pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)> {
+pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)>, Vec<(u32, u32, u32, u32)>) {
     println!("Finding horizontal lines");
     let start_time = std::time::Instant::now();
     let horizontal_lines = find_horizontal_lines(image);
@@ -549,7 +641,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
     println!("Elapsed: {:?}", start_time.elapsed());
     println!("Found {:?} boxes", boxes.len());
 
-    // if cfg!(debug_assertions) {
+    if cfg!(debug_assertions) {
         let mut debug_img = image.clone();
         for (start_x, start_y, end_x, end_y) in boxes.iter() {
             draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
@@ -558,7 +650,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
             draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
         }
         debug_img.save("/tmp/swiftmouse_0_boxes_initial.png").unwrap();
-    // }
+    }
 
     // std::process::exit(0);
 
@@ -572,21 +664,20 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
     boxes = sample_boxes;
     
 
-    let mut progress = 0;
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in boxes.iter() {
-        // println!("Box {:?} {:?} {:?} {:?}", start_x, start_y, end_x, end_y);
-        progress += 1;
-        // println!("Progress {:?}", progress);
-        // println!("Dimensions {:?} x {:?}", end_x - start_x, end_y - start_y);
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-        
-        // draw_vertical_line_colored(&mut debug_img, *start_x + 100 + progress * 5, *start_y, *end_y, image::Rgba([0, 255, 0, 255]));
-    }
-    debug_img.save("/tmp/swiftmouse_0_boxes.png").unwrap();
+    // let mut progress = 0;
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in boxes.iter() {
+    //     // println!("Box {:?} {:?} {:?} {:?}", start_x, start_y, end_x, end_y);
+    //     progress += 1;
+    //     // println!("Progress {:?}", progress);
+    //     // println!("Dimensions {:?} x {:?}", end_x - start_x, end_y - start_y);
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    //     // draw_vertical_line_colored(&mut debug_img, *start_x + 100 + progress * 5, *start_y, *end_y, image::Rgba([0, 255, 0, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_boxes.png").unwrap();
 
     
     println!("Filtering boxes");
@@ -660,29 +751,33 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
     println!("Filtered boxes {:?}", filtered_boxes.len());
     println!("Elapsed: {:?}", start.elapsed());
 
-    // debug
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in filtered_boxes.iter() {
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    }
-    debug_img.save("/tmp/swiftmouse_0_filtered_boxes.png").unwrap();
+    // // debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in filtered_boxes.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_filtered_boxes.png").unwrap();
 
     let mut sorted_boxes = vec![Vec::new(); image.height() as usize];
     let mut big_boxes = Vec::new();
-    let mut merged_texts = Vec::new();
-    let mut unmerged_texts = Vec::new();
+    let mut small_boxes = Vec::new();
     for (start_x, start_y, end_x, end_y) in filtered_boxes.iter() {
         let max_textfragment_height = 35;
         if end_y - start_y > max_textfragment_height {
             big_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-            continue;
+        } else {
+            small_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
         }
+    }
 
+    let mut merged_texts = Vec::new();
+    for (start_x, start_y, end_x, end_y) in small_boxes.iter() {
         sorted_boxes[*start_y as usize].push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
     }
+
     let start = std::time::Instant::now();
     println!("Resolving texts");
     for boxes in sorted_boxes.iter() {
@@ -694,62 +789,20 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
 
         for boxes in sorted_boxes_end_y.iter() {
             if boxes.len() > 1 {
-                // println!("Textline {:?}", boxes.len());
-                // merge if start close to end
-                let mut done = true;
-                let mut boxes = boxes.clone();
-                // loop {
-                //     done = true;
-                //     let mut merged_boxes = Vec::new();
-                //     let mut merged = vec![false; boxes.len()];
-                //     for (idx_1, (start_x_1, start_y_1, end_x_1, end_y_1)) in boxes.iter().enumerate() {
-                //         if merged[idx_1] {
-                //             continue;
-                //         }
-                //         for (idx_2, (start_x_2, start_y_2, end_x_2, end_y_2)) in boxes.iter().enumerate() {
-                //             if idx_1 == idx_2 {
-                //                 continue;
-                //             }
-                //             if (*start_x_1 as i32 - *end_x_2 as i32).abs() < 5 {
-                //                 merged[idx_1] = true;
-                //                 merged[idx_2] = true;
-                //                 merged_boxes.push((start_x_1.clone(), start_y_1.clone(), end_x_2.clone(), end_y_2.clone()));
-                //                 done = false;
-                //                 break;
-                //             }
-                //         }
-                //     }
-                //
-                //     // push all that are not merged
-                //     for (idx, (start_x, start_y, end_x, end_y)) in boxes.iter().enumerate() {
-                //         if !merged[idx] {
-                //             merged_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-                //         }
-                //     }
-                //
-                //     boxes = merged_boxes;
-                //
-                //     if done {
-                //         break;
-                //     }
-                // }
-
-                // println!("Before parent filter {:?}", boxes.len());                
-                let filtered_boxes = filter_parents(boxes);
-                println!("After parent filter {:?}", filtered_boxes.len());
-                // expand boxes by 1px in x back and forth
-                let merged_boxes = merge_boxes(filtered_boxes, true);
-
-                merged_texts.extend(merged_boxes.iter());
-            } else {
-                unmerged_texts.extend(boxes.iter());
+                // let filtered_boxes = filter_Varents(boxes.clone());
+                // println!("After parent filter {:?}", filtered_boxes.len());
+                let merged_boxes = merge_boxes(boxes.clone(), 5, 0);
+                // println!("After merge {:?}", merged_boxes.len());
+                let merged_boxes = filter_children(merged_boxes);
+                // println!("After child filter {:?}", merged_boxes.len());
+                merged_texts.extend(merged_boxes);
             }
         }
     }
     println!("Elapsed: {:?}", start.elapsed());
     println!("Merged texts {:?}", merged_texts.len());
 
-    //debug
+    // //debug
     let mut debug_img = image.clone();
     // draw big boxes
     for (start_x, start_y, end_x, end_y) in big_boxes.iter() {
@@ -759,31 +812,130 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
         draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
     }
     debug_img.save("/tmp/swiftmouse_0_big_boxes.png").unwrap();
-    // draw small boxes
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in merged_texts.iter() {
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    }
-    debug_img.save("/tmp/swiftmouse_0_small_boxes.png").unwrap();
+    // // draw small boxes
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in merged_texts.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_small_boxes.png").unwrap();
 
-    // draw small boxes
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in unmerged_texts.iter() {
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // remove padding texts
+    let start = std::time::Instant::now();
+    let no_padding_boxes = remove_box_padding(image, merged_texts.clone());
+    println!("No padding boxes {:?}", no_padding_boxes.len());
+    println!("Elapsed: {:?}", start.elapsed());
+
+    // // debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in no_padding_boxes.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_no_padding_boxes.png").unwrap();
+
+    // for each text segment cut out long same colored sectinos
+    let mut new_boxes = Vec::new();
+    for (start_x, start_y, end_x, end_y) in no_padding_boxes.iter() {
+        let mut sections = Vec::new();
+        let mut sx = start_x.clone();
+        let mut same_colored_count = 0;
+        let same_colored_threshhold = 10;
+        let mut is_segment_started = true;
+
+        for x in *start_x..*end_x {
+            let mut same_color = true;
+            for y in *start_y..*end_y {
+                if image.get_pixel(x, y) != image.get_pixel(x, *start_y) {
+                    same_color = false;
+                    break;
+                }
+            }
+            if same_color {
+                if is_segment_started {
+                    same_colored_count += 1;
+                    if same_colored_count > same_colored_threshhold {
+                        is_segment_started = false;
+                        sections.push((sx, x));
+                    }
+                }
+            } else {
+                same_colored_count = 0;
+                if !is_segment_started {
+                    sx = x;
+                    is_segment_started = true;
+                }
+            }
+        }
+
+        if is_segment_started {
+            sections.push((sx, end_x.clone()));
+        }
+
+        for (sx, ex) in sections.iter() {
+            new_boxes.push((sx.clone(), start_y.clone(), ex.clone(), end_y.clone()));
+        }
     }
-    debug_img.save("/tmp/swiftmouse_0_unmerged_texts.png").unwrap();
+
+    // // debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in new_boxes.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_new_boxes.png").unwrap();
+
+    // remove padding once more
+    let no_padding_boxes = remove_box_padding(image, new_boxes.clone());
+    println!("No padding boxes {:?}", no_padding_boxes.len());
+
+    // // debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in no_padding_boxes.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_no_padding_boxes_2.png").unwrap();
+
+    let smallboxes = filter_children(no_padding_boxes.clone());
+    println!("No children boxes {:?}", smallboxes.len());
+    // let big_boxes_filtered = filter_parents(big_boxes.clone());
+    // println!("No parents boxes {:?}", big_boxes_filtered.len());
+    // //debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in big_boxes_filtered.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_no_parent_big_boxes.png").unwrap();
+
+    // // debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in smallboxes.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_no_children_boxes.png").unwrap();
 
     // filter boxes where horizontal sides are the same but vertical sizes overlap
+    let start = std::time::Instant::now();
+    println!("Filtering boxes 2");
     let mut filtered_boxes_2 = Vec::new();
-    for (idx_1, (start_x_1, start_y_1, end_x_1, end_y_1)) in filtered_boxes.iter().enumerate() {
+    for (idx_1, (start_x_1, start_y_1, end_x_1, end_y_1)) in big_boxes.iter().enumerate() {
         let mut discard = false;
-        for (idx_2, (start_x_2, start_y_2, end_x_2, end_y_2)) in filtered_boxes.iter().enumerate() {
+        for (idx_2, (start_x_2, start_y_2, end_x_2, end_y_2)) in big_boxes.iter().enumerate() {
             if idx_1 == idx_2 {
                 continue;
             }
@@ -809,6 +961,8 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
             filtered_boxes_2.push((start_x_1.clone(), start_y_1.clone(), end_x_1.clone(), end_y_1.clone()));
         }
     }
+    println!("Filtered boxes 2 {:?}", filtered_boxes_2.len());
+    println!("Elapsed: {:?}", start.elapsed());
 
     // debug
     let mut debug_img = image.clone();
@@ -821,99 +975,154 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)>
     println!("Filtered boxes 2 {:?}", filtered_boxes_2.len());
     debug_img.save("/tmp/swiftmouse_0_filtered_boxes_2.png").unwrap();
 
-    // if boxes are entirely contained in others discard
-    let mut filtered_boxes_3 = Vec::new();
-    for (idx_1, (start_x_1, start_y_1, end_x_1, end_y_1)) in filtered_boxes_2.iter().enumerate() {
-        let mut discard = false;
-        for (idx_2, (start_x_2, start_y_2, end_x_2, end_y_2)) in filtered_boxes_2.iter().enumerate() {
-            if idx_1 == idx_2 {
-                continue;
+    // merge big boxes w
+    let start = std::time::Instant::now();
+    println!("Merging boxes");
+    // filter all parents
+    let filtered_boxes_2 = filter_parents(filtered_boxes_2.clone());
+    let merged_big_boxes = merge_boxes(filtered_boxes_2.clone(), 1, 0);
+
+    // drop less than 10 wide
+    let merged_big_boxes = merged_big_boxes.iter().filter(|(start_x, _, end_x, _)| end_x - start_x > 10).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
+    
+    // discard boxes less than 10 wide
+    // let merged_big_boxes = merged_big_boxes.iter().filter(|(start_x, _, end_x, _)| end_x - start_x > 10).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
+    println!("Merged boxes {:?}", merged_big_boxes.len());
+    println!("Elapsed: {:?}", start.elapsed());
+
+    // debug
+    let mut debug_img = image.clone();
+    for (start_x, start_y, end_x, end_y) in merged_big_boxes.iter() {
+        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    }
+    debug_img.save("/tmp/swiftmouse_0_merged_big_boxes.png").unwrap();
+
+    // filter big boxes, if a big box intersects more than 2 small boxes discard
+    let start = std::time::Instant::now();
+    println!("Filtering big boxes");
+    let mut filtered_big_boxes = Vec::new();
+    for (start_x, start_y, end_x, end_y) in merged_big_boxes.iter() {
+        let smallbox_threshold = 1;
+        let mut smallbox_intersects_count = 0;
+        let mut smallbox_contains_count = 0;
+        for (small_start_x, small_start_y, small_end_x, small_end_y) in smallboxes.iter() {
+            let intersects = small_end_x > start_x && end_x > small_start_x && small_end_y > start_y && end_y > small_start_y;
+            if intersects {
+                smallbox_intersects_count += 1;
             }
-            
-            if start_x_1 >= start_x_2 && end_x_1 <= end_x_2 && start_y_1 >= start_y_2 && end_y_1 <= end_y_2 {
+            let contains = small_start_x > start_x && small_end_x < end_x && small_start_y > start_y && small_end_y < end_y;
+            if contains {
+                // smallbox_contains_count += 1;
+            }
+        }
+        let intersections_only = smallbox_intersects_count - smallbox_contains_count;
+
+        if intersections_only <= smallbox_threshold {
+            filtered_big_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
+        }
+    }
+    println!("Filtered big boxes {:?}", filtered_big_boxes.len());
+    println!("Elapsed: {:?}", start.elapsed());
+
+    // remove padding
+    let mut filtered_big_boxes = remove_box_padding(image, filtered_big_boxes.clone());
+
+    // filter out big boxes that are contained by small boxes
+    let mut filtered_big_boxes_new = Vec::new();
+    for (start_x, start_y, end_x, end_y) in filtered_big_boxes.iter() {
+        let mut discard = false;
+        for (small_start_x, small_start_y, small_end_x, small_end_y) in smallboxes.iter() {
+            if small_start_x <= start_x && small_end_x >= end_x && small_start_y <= start_y && small_end_y >= end_y {
                 discard = true;
                 break;
             }
         }
-
         if !discard {
-            filtered_boxes_3.push((start_x_1.clone(), start_y_1.clone(), end_x_1.clone(), end_y_1.clone()));
+            filtered_big_boxes_new.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
         }
     }
+    filtered_big_boxes = filtered_big_boxes_new;
 
-    // debug
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in filtered_boxes_3.iter() {
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    }
-    println!("Filtered boxes 3 {:?}", filtered_boxes_3.len());
-    debug_img.save("/tmp/swiftmouse_0_filtered_boxes_3.png").unwrap();
-
-    let text_width = 60;
-    let text_height = 24;
-    // split boxes into text and non text
-
-    let mut text_boxes = Vec::new();
-    let mut non_text_boxes = Vec::new();
-    for (start_x, start_y, end_x, end_y) in filtered_boxes_3.iter() {
-        let width = end_x - start_x;
-        let height = end_y - start_y;
-        if width < text_width && height < text_height {
-            text_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-        } else {
-            non_text_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-        }
-    }
-
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in text_boxes.iter() {
-        draw_box(&mut debug_img, *start_x, *start_y, *end_x, *end_y, image::Rgba([255, 0, 0, 255]));
-    }
-    for (start_x, start_y, end_x, end_y) in non_text_boxes.iter() {
-        draw_box(&mut debug_img, *start_x, *start_y, *end_x, *end_y, image::Rgba([255, 0, 255, 255]));
-    }
-    println!("Text boxes {:?}", text_boxes.len());
-    println!("Non text boxes {:?}", non_text_boxes.len());
-    debug_img.save("/tmp/swiftmouse_0_text_non_text_boxes.png").unwrap();
-
-    // extend text boxes by padding
-    let padding = 4;
-    let mut text_boxes_extended = Vec::new();
-    for (start_x, start_y, end_x, end_y) in text_boxes.iter() {
-        text_boxes_extended.push((
-            cmp::max(0, *start_x as i32 - padding) as u32,
-            cmp::max(0, *start_y as i32 - padding) as u32,
-            cmp::min(image.width() as i32 - 1, (*end_x as i32 + padding)) as u32,
-            cmp::min(image.height() as i32 - 1, (*end_y as i32 + padding)) as u32
-        ));
-    }
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in text_boxes_extended.iter() {
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 255, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    }
-    debug_img.save("/tmp/swiftmouse_0_text_boxes_extended.png").unwrap();
-
-    let all_boxes = text_boxes_extended.iter().chain(non_text_boxes.iter()).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
-    let merged_boxes = merge_boxes(all_boxes, false);
-    
-    // debug
-    let mut debug_img = image.clone();
-    for (start_x, start_y, end_x, end_y) in merged_boxes.iter() {
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    }
-    debug_img.save("/tmp/swiftmouse_0_merged_boxes.png").unwrap();
+    // drop height less than 10
+    // let filtered_big_boxes = filtered_big_boxes.iter().filter(|(_, start_y, _, end_y)| end_y - start_y > 10).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
 
 
-    return merged_boxes;
+    // // debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in filtered_boxes_3.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // println!("Filtered boxes 3 {:?}", filtered_boxes_3.len());
+    // debug_img.save("/tmp/swiftmouse_0_filtered_boxes_3.png").unwrap();
+
+    // let text_width = 60;
+    // let text_height = 24;
+    // // split boxes into text and non text
+    //
+    // let mut text_boxes = Vec::new();
+    // let mut non_text_boxes = Vec::new();
+    // for (start_x, start_y, end_x, end_y) in filtered_boxes_3.iter() {
+    //     let width = end_x - start_x;
+    //     let height = end_y - start_y;
+    //     if width < text_width && height < text_height {
+    //         text_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
+    //     } else {
+    //         non_text_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
+    //     }
+    // }
+    //
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in text_boxes.iter() {
+    //     draw_box(&mut debug_img, *start_x, *start_y, *end_x, *end_y, image::Rgba([255, 0, 0, 255]));
+    // }
+    // for (start_x, start_y, end_x, end_y) in non_text_boxes.iter() {
+    //     draw_box(&mut debug_img, *start_x, *start_y, *end_x, *end_y, image::Rgba([255, 0, 255, 255]));
+    // }
+    // println!("Text boxes {:?}", text_boxes.len());
+    // println!("Non text boxes {:?}", non_text_boxes.len());
+    // debug_img.save("/tmp/swiftmouse_0_text_non_text_boxes.png").unwrap();
+    //
+    // // extend text boxes by padding
+    // let padding = 4;
+    // let mut text_boxes_extended = Vec::new();
+    // for (start_x, start_y, end_x, end_y) in text_boxes.iter() {
+    //     text_boxes_extended.push((
+    //         cmp::max(0, *start_x as i32 - padding) as u32,
+    //         cmp::max(0, *start_y as i32 - padding) as u32,
+    //         cmp::min(image.width() as i32 - 1, (*end_x as i32 + padding)) as u32,
+    //         cmp::min(image.height() as i32 - 1, (*end_y as i32 + padding)) as u32
+    //     ));
+    // }
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in text_boxes_extended.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 255, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_text_boxes_extended.png").unwrap();
+    //
+    // let all_boxes = text_boxes_extended.iter().chain(non_text_boxes.iter()).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
+    // let merged_boxes = merge_boxes(all_boxes, false);
+    // 
+    // // debug
+    // let mut debug_img = image.clone();
+    // for (start_x, start_y, end_x, end_y) in merged_boxes.iter() {
+    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+    // }
+    // debug_img.save("/tmp/swiftmouse_0_merged_boxes.png").unwrap();
+
+
+    return (smallboxes, filtered_big_boxes);
 }
 
 fn overlapping_area(start_x_1: &u32, start_y_1: &u32, end_x_1: &u32, end_y_1: &u32, start_x_2: &u32, start_y_2: &u32, end_x_2: &u32, end_y_2: &u32) -> u32 {

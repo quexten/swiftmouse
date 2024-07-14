@@ -15,14 +15,14 @@ const SCREENSHOT_PATH: &str = "/tmp/screenshot.png";
 async fn main() {
     println!("[Main] Taking screenshot");
     let start_time = std::time::Instant::now();
-    // let screenshot_uri = match screenshot::screenshot().await {
-    //     Ok(uri) => uri,
-    //     Err(err) => {
-    //         println!("[Main] Failed to take screenshot: {:?}", err);
-    //         return;
-    //     }
-    // };
-    let screenshot_uri = "/home/quexten/screenshot_5.png";
+    let screenshot_uri = match screenshot::screenshot().await {
+        Ok(uri) => uri,
+        Err(err) => {
+            println!("[Main] Failed to take screenshot: {:?}", err);
+            return;
+        }
+    };
+    // let screenshot_uri = "/home/quexten/screenshot_5.png";
     println!("[Main] Elapsed: {:?}", start_time.elapsed());
 
     println!("[Main] Opening screenshot");
@@ -34,12 +34,12 @@ async fn main() {
 
     println!("[Main] Finding bounding boxes");
     let start_time = std::time::Instant::now();
-    let bounding_boxes = bounding_box::find_bounding_boxes_v2(&screenshot);
+    let (text_boxes, big_boxes)/* bounding_boxes */ = bounding_box::find_bounding_boxes_v2(&screenshot);
     println!("[Main] Elapsed: {:?}", start_time.elapsed());
-    println!("[Main] Found {:?} bounding boxes", bounding_boxes.len());
+    println!("[Main] Found {:?} small boxes and {:?} big boxes", text_boxes.len(), big_boxes.len());
 
 
     println!("[Main] Showing GUI");
     autotype::start_autoclick_session().await.unwrap();
-    gui::show_gui(bounding_boxes, screenshot.width(), screenshot.height(), SCREENSHOT_PATH.to_string());
+    gui::show_gui(text_boxes, big_boxes, screenshot.width(), screenshot.height(), SCREENSHOT_PATH.to_string());
 }
