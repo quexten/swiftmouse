@@ -1,7 +1,7 @@
 use std::{cmp, sync::{Arc, Mutex}, thread, vec};
 
 use image::{DynamicImage, GenericImage, GenericImageView};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 
 use crate::image_utils::{self, draw_box};
 
@@ -406,10 +406,12 @@ fn deduplicate_captured_edges(edges: &Vec<Vec<(u32, u32, EdgeType)>>) -> Vec<Vec
 }
 
 pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)>, Vec<(u32, u32, u32, u32)>) {
+    let write_debug_images = cfg!(debug_assertions) || false;
+
     println!("Finding horizontal lines");
     let start_time = std::time::Instant::now();
     let horizontal_lines = find_horizontal_lines(image);
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         println!("Horizontal lines {:?}", horizontal_lines.iter().map(|x| x.len()).sum::<usize>());
         draw_lines(&image.clone(), &horizontal_lines, Direction::Horizontal, image::Rgba([255, 0, 0, 255])).save("/tmp/swiftmouse_0_horizontal_lines.png").unwrap();
     }
@@ -418,7 +420,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     println!("Finding vertical lines");
     let start_time = std::time::Instant::now();
     let vertical_lines = find_vertical_lines(image);
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         println!("Vertical lines {:?}", vertical_lines.iter().map(|x| x.len()).sum::<usize>());
         draw_lines(&image.clone(), &vertical_lines, Direction::Vertical, image::Rgba([255, 0, 0, 255])).save("/tmp/swiftmouse_0_vertical_lines.png").unwrap();
     }
@@ -427,7 +429,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     println!("Checking edges");
     let start_time = std::time::Instant::now();
     let horizontal_edges = check_edge(image, &horizontal_lines, Direction::Horizontal);
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         // filter to only before lines
         let before_lines = horizontal_edges.iter().map(|x| x.iter().filter(|(_, _, edge_type)| *edge_type == EdgeType::Before).map(|(start, end, _)| (start.clone(), end.clone())).collect::<Vec<_>>()).collect::<Vec<_>>();
         draw_lines(&image.clone(), &before_lines, Direction::Horizontal, image::Rgba([255, 0, 0, 255])).save("/tmp/swiftmouse_0_horizontal_lines_before.png").unwrap();
@@ -442,7 +444,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
 
     println!("Checking vertical edges");
     let vertical_edges = check_edge(image, &vertical_lines, Direction::Vertical);
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         // filter to only before lines
         let before_lines = vertical_edges.iter().map(|x| x.iter().filter(|(_, _, edge_type)| *edge_type == EdgeType::Before).map(|(start, end, _)| (start.clone(), end.clone())).collect::<Vec<_>>()).collect::<Vec<_>>();
         draw_lines(&image.clone(), &before_lines, Direction::Vertical, image::Rgba([255, 0, 0, 255])).save("/tmp/swiftmouse_0_vertical_lines_before.png").unwrap();
@@ -466,7 +468,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     let filtered_vertical_edges = vertical_edges.iter().map(|x| x.iter().filter(|(_, _, edge_type)| *edge_type == EdgeType::Before || *edge_type == EdgeType::After || *edge_type == EdgeType::Both).map(|(start, end, edgetype)| (start.clone(), end.clone(), edgetype.clone())).collect::<Vec<_>>()).collect::<Vec<_>>();
     println!("Elapsed: {:?}", start_time.elapsed());
 
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         println!("Filtered horizontal edges {:?}", filtered_horizontal_edges.iter().map(|x| x.len()).sum::<usize>());
         println!("Filtered vertical edges {:?}", filtered_vertical_edges.iter().map(|x| x.len()).sum::<usize>());
     }
@@ -481,7 +483,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     let deduplicated_vertical_edges = deduplicate_captured_edges(&filtered_vertical_edges);
     println!("Elapsed: {:?}", start_time.elapsed());
 
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         let before_lines_deduplicated = deduplicated_horizontal_edges.iter().map(|x| x.iter().filter(|(_, _, edge_type)| *edge_type == EdgeType::Before).map(|(start, end, _)| (start.clone(), end.clone())).collect::<Vec<_>>()).collect::<Vec<_>>();
         draw_lines(&image.clone(), &before_lines_deduplicated, Direction::Horizontal, image::Rgba([255, 0, 0, 255])).save("/tmp/swiftmouse_0_horizontal_lines_before_deduplicated.png").unwrap();
         let after_lines_deduplicated: Vec<Vec<(u32, u32)>> = deduplicated_horizontal_edges.iter().map(|x| x.iter().filter(|(_, _, edge_type)| *edge_type == EdgeType::After).map(|(start, end, _)| (start.clone(), end.clone())).collect::<Vec<_>>()).collect::<Vec<_>>();
@@ -567,7 +569,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     println!("Elapsed: {:?}", start.elapsed());
 
 
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         println!("Horizontal intersections {:?}", horizontal_intersections.iter().map(|x| x.len()).sum::<usize>());
         println!("Vertical intersections {:?}", vertical_intersections.iter().map(|x| x.len()).sum::<usize>());
         
@@ -587,61 +589,64 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
 
     println!("Finding boxes");
     let start_time = std::time::Instant::now();
-    let mut boxes = Vec::new();
-    for (horizontal_line_id, vertical_lines) in horizontal_intersections.iter().enumerate() {
-        if horizontal_lines_total[horizontal_line_id as usize].3 != EdgeType::Before {
-            continue;
-        }
-        // println!("Checking before-horizontal line {:?}", horizontal_line_id);
-
-        for vertical_line_id in vertical_lines.iter() {
-            if vertical_lines_total[*vertical_line_id as usize].3 != EdgeType::Before && vertical_lines_total[*vertical_line_id as usize].3 != EdgeType::Both {
-                continue;
-            }
-
-            // println!("Checking before-vertical line {:?}", vertical_line_id);
-
-            for vertical_line_id1 in vertical_lines.iter() {
-                if vertical_lines_total[*vertical_line_id1 as usize].3 != EdgeType::After && vertical_lines_total[*vertical_line_id1 as usize].3 != EdgeType::Both {
+    let boxes: Vec<(u32, u32, u32, u32)> = horizontal_intersections
+        .par_iter()
+        .enumerate()
+        .filter(|(id, _)| horizontal_lines_total[*id].3 == EdgeType::Before)
+        .map(|(horizontal_line_id, vertical_lines)| {
+            let mut boxes = Vec::new();
+            for vertical_line_id in vertical_lines.iter() {
+                if vertical_lines_total[*vertical_line_id as usize].3 != EdgeType::Before && vertical_lines_total[*vertical_line_id as usize].3 != EdgeType::Both {
                     continue;
                 }
-                // println!("Checking after-vertical line {:?}", vertical_line_id1);
-
-                let lines_1 = &vertical_intersections[*vertical_line_id as usize];
-                let lines_2 = &vertical_intersections[*vertical_line_id1 as usize];
-                for line in lines_1.iter() {
-                    // if after
-                    if lines_2.contains(line) && horizontal_lines_total[*line as usize].3 == EdgeType::After {
-                        let id_ht = &horizontal_line_id;
-                        let id_vl = vertical_line_id;
-                        let id_hb = line;
-                        let id_vr = vertical_line_id1;
-                        let (start_y, _, _, _, _) = horizontal_lines_total[*id_ht as usize];
-                        let (end_y, _, _, _, _) = horizontal_lines_total[*id_hb as usize];
-                        let (start_x, _, _, _, _) = vertical_lines_total[*id_vl as usize];
-                        let (end_x, _, _, _, _) = vertical_lines_total[*id_vr as usize];
-
-                        // println!("Found box {:?} {:?} {:?} {:?}", start_x, start_y, end_x, end_y);
-
-                        if start_x < end_x && start_y < end_y {
-                            let width = end_x - start_x;
-                            let height = end_y - start_y;
-                            // println!("Dimensions {:?} x {:?}", width, height);
-                            if width < 5 || height < 12 {
-                                continue;
+    
+                // println!("Checking before-vertical line {:?}", vertical_line_id);
+    
+                for vertical_line_id1 in vertical_lines.iter() {
+                    if vertical_lines_total[*vertical_line_id1 as usize].3 != EdgeType::After && vertical_lines_total[*vertical_line_id1 as usize].3 != EdgeType::Both {
+                        continue;
+                    }
+                    // println!("Checking after-vertical line {:?}", vertical_line_id1);
+    
+                    let lines_1 = &vertical_intersections[*vertical_line_id as usize];
+                    let lines_2 = &vertical_intersections[*vertical_line_id1 as usize];
+                    for line in lines_1.iter() {
+                        // if after
+                        if lines_2.contains(line) && horizontal_lines_total[*line as usize].3 == EdgeType::After {
+                            let id_ht = &horizontal_line_id;
+                            let id_vl = vertical_line_id;
+                            let id_hb = line;
+                            let id_vr = vertical_line_id1;
+                            let (start_y, _, _, _, _) = horizontal_lines_total[*id_ht as usize];
+                            let (end_y, _, _, _, _) = horizontal_lines_total[*id_hb as usize];
+                            let (start_x, _, _, _, _) = vertical_lines_total[*id_vl as usize];
+                            let (end_x, _, _, _, _) = vertical_lines_total[*id_vr as usize];
+    
+                            // println!("Found box {:?} {:?} {:?} {:?}", start_x, start_y, end_x, end_y);
+    
+                            if start_x < end_x && start_y < end_y {
+                                let width = end_x - start_x;
+                                let height = end_y - start_y;
+                                // println!("Dimensions {:?} x {:?}", width, height);
+                                if width < 5 || height < 12 {
+                                    continue;
+                                }
+                                boxes.push((start_x, start_y, end_x, end_y));
                             }
-                            boxes.push((start_x, start_y, end_x, end_y));
                         }
                     }
                 }
             }
-        }
-    }
+            boxes
+        })
+        .flatten()
+        .collect();
+
 
     println!("Elapsed: {:?}", start_time.elapsed());
     println!("Found {:?} boxes", boxes.len());
 
-    if cfg!(debug_assertions) {
+    if write_debug_images {
         let mut debug_img = image.clone();
         for (start_x, start_y, end_x, end_y) in boxes.iter() {
             draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
@@ -651,103 +656,77 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
         }
         debug_img.save("/tmp/swiftmouse_0_boxes_initial.png").unwrap();
     }
-
-    // std::process::exit(0);
-
-    let mut sample_boxes = Vec::new();
-    for (start_x, start_y, end_x, end_y) in boxes.iter() {
-        // if *end_x < 70 && *start_y > 430 && *end_y < 600 {
-        sample_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-        // }
-    }
-    println!("Sample boxes {:?}", sample_boxes.len());
-    boxes = sample_boxes;
-    
-
-    // let mut progress = 0;
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in boxes.iter() {
-    //     // println!("Box {:?} {:?} {:?} {:?}", start_x, start_y, end_x, end_y);
-    //     progress += 1;
-    //     // println!("Progress {:?}", progress);
-    //     // println!("Dimensions {:?} x {:?}", end_x - start_x, end_y - start_y);
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    //     // draw_vertical_line_colored(&mut debug_img, *start_x + 100 + progress * 5, *start_y, *end_y, image::Rgba([0, 255, 0, 255]));
-    // }
-    // debug_img.save("/tmp/swiftmouse_0_boxes.png").unwrap();
-
     
     println!("Filtering boxes");
     let start = std::time::Instant::now();
-    let mut filtered_boxes = Vec::new();
-    for (start_x, start_y, end_x, end_y) in boxes.iter() {
-        // println!("Checking box {:?} {:?} {:?} {:?}", start_x, start_y, end_x, end_y);
+    let filtered_boxes: Vec<(u32, u32, u32, u32)> = boxes.par_iter()
+        .filter(|(start_x, start_y, end_x, end_y)| {
+            // println!("Checking box {:?} {:?} {:?} {:?}", start_x, start_y, end_x, end_y);
 
-        // check if middle horizontal line is same color
-        let middle_y = (start_y + end_y) / 2;
-        let middle_x = (start_x + end_x) / 2;
-        
-        // if there is a padding of 40 pixels same color on one middle side continue
-        let padding = 40;
-        let mut same_color = true;
-        let start_color = image.get_pixel(middle_x, *start_y);
-        for y in *start_y..cmp::min(*start_y+padding, *end_y) {
-            if image.get_pixel(middle_x, y) != start_color {
-                same_color = false;
-                break;
+            // check if middle horizontal line is same color
+            let middle_y = (start_y + end_y) / 2;
+            let middle_x = (start_x + end_x) / 2;
+            
+            // if there is a padding of 40 pixels same color on one middle side continue
+            let padding = 40;
+            let mut same_color = true;
+            let start_color = image.get_pixel(middle_x, *start_y);
+            for y in *start_y..cmp::min(*start_y+padding, *end_y) {
+                if image.get_pixel(middle_x, y) != start_color {
+                    same_color = false;
+                    break;
+                }
             }
-        }
-        if same_color {
-            // println!("Same color top {:?}", start_y);
-            continue;
-        }
-
-        let mut same_color = true;
-        let start_color = image.get_pixel(middle_x, *end_y);
-        for y in cmp::max((*end_y as i32) - padding as i32, *start_y as i32)..(*end_y as i32) {
-            let y = y as u32;
-            if image.get_pixel(middle_x, y) != start_color {
-                same_color = false;
-                break;
+            if same_color {
+                // println!("Same color top {:?}", start_y);
+                return false;
             }
-        }
-        if same_color {
-            // println!("Same color bottom {:?}", end_y);
-            continue;
-        }
 
-        let mut same_color = true;
-        let start_color = image.get_pixel(*start_x, middle_y);
-        for x in *start_x..cmp::min(*start_x+padding, *end_x) {
-            if image.get_pixel(x, middle_y) != start_color {
-                same_color = false;
-                break;
+            let mut same_color = true;
+            let start_color = image.get_pixel(middle_x, *end_y);
+            for y in cmp::max((*end_y as i32) - padding as i32, *start_y as i32)..(*end_y as i32) {
+                let y = y as u32;
+                if image.get_pixel(middle_x, y) != start_color {
+                    same_color = false;
+                    break;
+                }
             }
-        }
-        if same_color {
-            // println!("Same color left {:?}", start_x);
-            continue;
-        }
-
-        let mut same_color = true;
-        let start_color = image.get_pixel(*end_x, middle_y);
-        for x in cmp::max((*end_x as i32) - padding as i32, *start_x as i32)..*end_x as i32 {
-            let x = x as u32;
-            if image.get_pixel(x, middle_y) != start_color {
-                same_color = false;
-                break;
+            if same_color {
+                // println!("Same color bottom {:?}", end_y);
+                return false;
             }
-        }
-        if same_color {
-            // println!("Same color right {:?}", end_x);
-            continue;
-        }
 
-        filtered_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-    }
+            let mut same_color = true;
+            let start_color = image.get_pixel(*start_x, middle_y);
+            for x in *start_x..cmp::min(*start_x+padding, *end_x) {
+                if image.get_pixel(x, middle_y) != start_color {
+                    same_color = false;
+                    break;
+                }
+            }
+            if same_color {
+                // println!("Same color left {:?}", start_x);
+                return false;
+            }
+
+            let mut same_color = true;
+            let start_color = image.get_pixel(*end_x, middle_y);
+            for x in cmp::max((*end_x as i32) - padding as i32, *start_x as i32)..*end_x as i32 {
+                let x = x as u32;
+                if image.get_pixel(x, middle_y) != start_color {
+                    same_color = false;
+                    break;
+                }
+            }
+            if same_color {
+                // println!("Same color right {:?}", end_x);
+                return false;
+            }
+
+            return true;
+        })
+        .map(|x| x.clone())
+        .collect();
     println!("Filtered boxes {:?}", filtered_boxes.len());
     println!("Elapsed: {:?}", start.elapsed());
 
@@ -766,8 +745,36 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     let mut small_boxes = Vec::new();
     for (start_x, start_y, end_x, end_y) in filtered_boxes.iter() {
         let max_textfragment_height = 35;
+        let max_textfragment_height_2 = 25;
         if end_y - start_y > max_textfragment_height {
             big_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
+        } else if end_y - start_y > max_textfragment_height_2 {
+             // if the color around the box is the same in the padding area
+            let (padded_startx, padded_starty, padded_endx, padded_endy) = (cmp::max(0, *start_x as i32 - 4) as u32, cmp::max(0, *start_y as i32 - 4) as u32, end_x + 4, end_y + 4);
+            let mut padding_dirty = false;
+            for y in padded_starty..padded_endy {
+                for x in padded_startx..padded_endx {
+                    if x < 0 || y < 0 || x >= image.width() || y >= image.height() {
+                        continue;
+                    }
+                    if x < *start_x || x > *end_x || y < *start_y || y > *end_y {
+                        if image.get_pixel(x, y) != image.get_pixel(*start_x, *start_y) {
+                            padding_dirty = true;
+                            break;
+                        }
+                    }
+                }
+                if padding_dirty {
+                    break;
+                }
+            }
+
+            // if there is no collision it is a big box, else a small box
+            if !padding_dirty {
+                big_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
+            } else {
+                small_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
+            }
         } else {
             small_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
         }
@@ -802,41 +809,42 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     println!("Elapsed: {:?}", start.elapsed());
     println!("Merged texts {:?}", merged_texts.len());
 
-    // //debug
-    let mut debug_img = image.clone();
-    // draw big boxes
-    for (start_x, start_y, end_x, end_y) in big_boxes.iter() {
-        draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-        draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-        draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-        draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    }
-    debug_img.save("/tmp/swiftmouse_0_big_boxes.png").unwrap();
-    // // draw small boxes
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in merged_texts.iter() {
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    // }
-    // debug_img.save("/tmp/swiftmouse_0_small_boxes.png").unwrap();
-
+    if write_debug_images {
+        let mut debug_img = image.clone();
+        for (start_x, start_y, end_x, end_y) in big_boxes.iter() {
+            draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+            draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+            draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+            draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+        }
+        debug_img.save("/tmp/swiftmouse_0_big_boxes.png").unwrap();
+        
+        let mut debug_img = image.clone();
+        for (start_x, start_y, end_x, end_y) in small_boxes.iter() {
+            draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+            draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+            draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+            draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+        }
+        debug_img.save("/tmp/swiftmouse_0_small_boxes.png").unwrap();
+    }   
+    
     // remove padding texts
     let start = std::time::Instant::now();
     let no_padding_boxes = remove_box_padding(image, merged_texts.clone());
     println!("No padding boxes {:?}", no_padding_boxes.len());
     println!("Elapsed: {:?}", start.elapsed());
 
-    // // debug
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in no_padding_boxes.iter() {
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    // }
-    // debug_img.save("/tmp/swiftmouse_0_no_padding_boxes.png").unwrap();
+    if write_debug_images {
+        let mut debug_img = image.clone();
+        for (start_x, start_y, end_x, end_y) in no_padding_boxes.iter() {
+            draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+            draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+            draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+            draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+        }
+        debug_img.save("/tmp/swiftmouse_0_no_padding_boxes.png").unwrap();
+    }
 
     // for each text segment cut out long same colored sectinos
     let mut new_boxes = Vec::new();
@@ -881,29 +889,32 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
         }
     }
 
-    // // debug
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in new_boxes.iter() {
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    // }
-    // debug_img.save("/tmp/swiftmouse_0_new_boxes.png").unwrap();
+    if write_debug_images {
+        let mut debug_img = image.clone();
+        for (start_x, start_y, end_x, end_y) in new_boxes.iter() {
+            draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+            draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+            draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+            draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+        }
+        debug_img.save("/tmp/swiftmouse_0_new_boxes.png").unwrap();
+    }
 
     // remove padding once more
     let no_padding_boxes = remove_box_padding(image, new_boxes.clone());
     println!("No padding boxes {:?}", no_padding_boxes.len());
 
-    // // debug
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in no_padding_boxes.iter() {
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    // }
-    // debug_img.save("/tmp/swiftmouse_0_no_padding_boxes_2.png").unwrap();
+    
+    if write_debug_images {
+        let mut debug_img = image.clone();
+        for (start_x, start_y, end_x, end_y) in no_padding_boxes.iter() {
+            draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+            draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+            draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+            draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+        }
+        debug_img.save("/tmp/swiftmouse_0_no_padding_boxes_2.png").unwrap();
+    }
 
     let smallboxes = filter_children(no_padding_boxes.clone());
     println!("No children boxes {:?}", smallboxes.len());
@@ -928,6 +939,23 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
     // }
     // debug_img.save("/tmp/swiftmouse_0_no_children_boxes.png").unwrap();
+
+    // drop all big boxes with endx bigger than 70
+    let big_boxes = big_boxes.iter().filter(|(_, _, end_x, _)| *end_x < 70).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
+
+    if write_debug_images {
+        let mut debug_img = image.clone();
+        for (start_x, start_y, end_x, end_y) in big_boxes.iter() {
+            draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
+            draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
+            draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
+            draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
+            // draw greenline at offset
+            let offset = start_y + end_y % 1000;
+            draw_vertical_line_colored(&mut debug_img, *start_x + offset, *start_y, *end_y, image::Rgba([0, 255, 0, 255]));
+        }
+        debug_img.save("/tmp/swiftmouse_0_big_boxes_filtered.png").unwrap();
+    }
 
     // filter boxes where horizontal sides are the same but vertical sizes overlap
     let start = std::time::Instant::now();
@@ -1046,82 +1074,6 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     }
     filtered_big_boxes = filtered_big_boxes_new;
 
-    // drop height less than 10
-    // let filtered_big_boxes = filtered_big_boxes.iter().filter(|(_, start_y, _, end_y)| end_y - start_y > 10).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
-
-
-    // // debug
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in filtered_boxes_3.iter() {
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    // }
-    // println!("Filtered boxes 3 {:?}", filtered_boxes_3.len());
-    // debug_img.save("/tmp/swiftmouse_0_filtered_boxes_3.png").unwrap();
-
-    // let text_width = 60;
-    // let text_height = 24;
-    // // split boxes into text and non text
-    //
-    // let mut text_boxes = Vec::new();
-    // let mut non_text_boxes = Vec::new();
-    // for (start_x, start_y, end_x, end_y) in filtered_boxes_3.iter() {
-    //     let width = end_x - start_x;
-    //     let height = end_y - start_y;
-    //     if width < text_width && height < text_height {
-    //         text_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-    //     } else {
-    //         non_text_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
-    //     }
-    // }
-    //
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in text_boxes.iter() {
-    //     draw_box(&mut debug_img, *start_x, *start_y, *end_x, *end_y, image::Rgba([255, 0, 0, 255]));
-    // }
-    // for (start_x, start_y, end_x, end_y) in non_text_boxes.iter() {
-    //     draw_box(&mut debug_img, *start_x, *start_y, *end_x, *end_y, image::Rgba([255, 0, 255, 255]));
-    // }
-    // println!("Text boxes {:?}", text_boxes.len());
-    // println!("Non text boxes {:?}", non_text_boxes.len());
-    // debug_img.save("/tmp/swiftmouse_0_text_non_text_boxes.png").unwrap();
-    //
-    // // extend text boxes by padding
-    // let padding = 4;
-    // let mut text_boxes_extended = Vec::new();
-    // for (start_x, start_y, end_x, end_y) in text_boxes.iter() {
-    //     text_boxes_extended.push((
-    //         cmp::max(0, *start_x as i32 - padding) as u32,
-    //         cmp::max(0, *start_y as i32 - padding) as u32,
-    //         cmp::min(image.width() as i32 - 1, (*end_x as i32 + padding)) as u32,
-    //         cmp::min(image.height() as i32 - 1, (*end_y as i32 + padding)) as u32
-    //     ));
-    // }
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in text_boxes_extended.iter() {
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 255, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    // }
-    // debug_img.save("/tmp/swiftmouse_0_text_boxes_extended.png").unwrap();
-    //
-    // let all_boxes = text_boxes_extended.iter().chain(non_text_boxes.iter()).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
-    // let merged_boxes = merge_boxes(all_boxes, false);
-    // 
-    // // debug
-    // let mut debug_img = image.clone();
-    // for (start_x, start_y, end_x, end_y) in merged_boxes.iter() {
-    //     draw_horizontal_line_colored(&mut debug_img, *start_y, *start_x, *end_x, image::Rgba([255, 0, 0, 255]));
-    //     draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
-    //     draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-    // }
-    // debug_img.save("/tmp/swiftmouse_0_merged_boxes.png").unwrap();
-
-
     return (smallboxes, filtered_big_boxes);
 }
 
@@ -1146,132 +1098,6 @@ fn draw_vertical_line_colored(image: &mut DynamicImage, x: u32, start_y: u32, en
         }
         image.put_pixel(x, y, color);
     }
-}
-
-pub fn find_bounding_boxes(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)> {
-    println!("[Bounding Boxes] Finding initial bounding boxes");
-    let start_time = std::time::Instant::now();
-    let bounding_boxes = find_initial_bounding_boxes(image);
-    println!("[Bounding Boxes] Elapsed: {:?}, Found {:?} bounding boxes", start_time.elapsed(), bounding_boxes.len());
-    if cfg!(debug_assertions) {
-        let mut image = image.clone();
-        let gray_image = image.to_luma8();
-        gray_image.save("/tmp/swiftmouse_0_gray_image.png").unwrap();
-
-        let mut edge_image = gray_image.clone();
-        for x in 1..gray_image.width()-1 {
-            for y in 1..gray_image.height()-1 {
-                let edge_pixel = gray_image.get_pixel(x, y).0[0] as i32 * 4
-                    + -1 * gray_image.get_pixel(x, y+1).0[0] as i32
-                    + -1 * gray_image.get_pixel(x-1, y).0[0] as i32
-                    + -1 * gray_image.get_pixel(x+1, y).0[0] as i32
-                    + -1 * gray_image.get_pixel(x, y-1).0[0] as i32;
-                let edge_pixel = edge_pixel.max(0).min(255) as u8;
-                edge_image.put_pixel(x, y, image::Luma([edge_pixel]));
-            }
-        }
-        edge_image.save("/tmp/swiftmouse_0_edge_image.png").unwrap();
-    }
-
-    if cfg!(debug_assertions) {
-        let mut image = image.clone();
-        image_utils::draw_boxes(&mut image, &bounding_boxes);
-        image.save("/tmp/swiftmouse_1_bounding_boxes.png").unwrap();
-    }
-
-    println!("[Bounding Boxes] Extending bounding boxes");
-    let start_time = std::time::Instant::now();
-    let mut extended_bounding_boxes: Vec<(u32, u32, u32, u32)> = Vec::new();
-    for (min_x, min_y, max_x, max_y) in bounding_boxes.clone() {
-        let min_x = min_x.saturating_sub(3);
-        let min_y = min_y.saturating_sub(3);
-        let max_x = max_x.saturating_add(3);
-        let max_y = max_y.saturating_add(3);
-        extended_bounding_boxes.push((min_x, min_y, max_x, max_y));
-    }
-    println!("[Bounding Boxes] Elapsed: {:?}", start_time.elapsed());
-    if cfg!(debug_assertions) {
-        let mut image = image.clone();
-        image_utils::draw_boxes(&mut image, &extended_bounding_boxes);
-        image.save("/tmp/swiftmouse_2_extended_bounding_boxes.png").unwrap();
-    }
-
-    println!("Merging bounding boxes {:?}", bounding_boxes.len());
-    let start_time = std::time::Instant::now();
-    let merged_bounding_boxes = merge_overlapping_bounding_boxes(extended_bounding_boxes);
-    println!("Merged bounding boxes {:?}", merged_bounding_boxes.len());
-    println!("Elapsed: {:?}", start_time.elapsed());
-    if cfg!(debug_assertions) {
-        let mut image = image.clone();
-        image_utils::draw_boxes(&mut image, &merged_bounding_boxes);
-        image.save("/tmp/swiftmouse_3_merged_bounding_boxes.png").unwrap();
-    }
-
-    println!("Filtering bounding boxes");
-    let start_time = std::time::Instant::now();
-    let mut filtered_bounding_boxes: Vec<(u32, u32, u32, u32)> = Vec::new();
-    for (min_x, min_y, max_x, max_y) in merged_bounding_boxes.clone() {
-        if (max_x - min_x) < 100 && (max_y - min_y) < 100 {
-            filtered_bounding_boxes.push((min_x, min_y, max_x, max_y));
-        }
-    }
-    println!("Elapsed: {:?}", start_time.elapsed());
-    println!("Filtered bounding boxes {:?}", filtered_bounding_boxes.len());
-    if cfg!(debug_assertions) {
-        let mut image = image.clone();
-        image_utils::draw_boxes(&mut image, &filtered_bounding_boxes);
-        image.save("/tmp/swiftmouse_4_filtered_bounding_boxes.png").unwrap();
-    }
-
-    println!("Merging bounding boxes");
-    let start_time = std::time::Instant::now();
-    let merged_bounding_boxes = merge_overlapping_bounding_boxes(filtered_bounding_boxes);
-    println!("Elapsed: {:?}", start_time.elapsed());
-    println!("Merged bounding boxes {:?}", merged_bounding_boxes);
-    if cfg!(debug_assertions) {
-        let mut image = image.clone();
-        image_utils::draw_boxes(&mut image, &merged_bounding_boxes);
-        image.save("/tmp/swiftmouse_5_merged_bounding_boxes.png").unwrap();
-    }
-    return merged_bounding_boxes;
-}
-pub fn find_initial_bounding_boxes(image: &DynamicImage) -> Vec<(u32, u32, u32, u32)> {
-    let bounding_boxes: Arc<Mutex<Vec<(u32, u32, u32, u32)>>> = Arc::new(Mutex::new(Vec::new()));
-    let mut join_handles = Vec::new();
-
-    let num_threads = 16;
-    for i in 0..num_threads {
-        let local_screenshot = image.clone();
-        let start_x = local_screenshot.width() as u32 / num_threads * i;
-        let end_x = local_screenshot.width() as u32 / num_threads * (i+1);
-        let bb1 = bounding_boxes.clone();
-        let join_handle = thread::spawn(move || {
-            let mut visited_bitmap = vec![vec![false; local_screenshot.height() as usize]; local_screenshot.width() as usize];
-            let local_bitmap_height = local_screenshot.height() as u32;
-            for x in start_x..end_x {
-                //println!("Thread {:?} x {:?}", i, x);
-                for y in 0..local_bitmap_height {
-                    //println!("Thread {:?} y {:?}", i, y);
-                    let bounding_box = get_bounding_box_flood_fill(&local_screenshot, x, y as u32, &mut visited_bitmap);
-                    match bounding_box {
-                        Some(bb) => {
-                            let mut bbs = bb1.lock().unwrap();
-                            bbs.push(bb);
-                        },
-                        None => {
-                        }
-                    }
-                }
-            }
-        });
-        join_handles.push(join_handle);
-    }
-
-    for join_handle in join_handles {
-        join_handle.join().unwrap();
-    }
-    let bounding_boxes = bounding_boxes.lock().unwrap();
-    return bounding_boxes.clone();
 }
 
 pub fn merge_overlapping_bounding_boxes(bounding_boxes: Vec<(u32, u32, u32, u32)>) -> Vec<(u32, u32, u32, u32)> {

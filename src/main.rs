@@ -1,8 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(rustdoc::missing_crate_level_docs)]
 
-use bounding_box::{find_bounding_boxes, find_initial_bounding_boxes};
-
 mod bounding_box;
 mod gui;
 mod screenshot;
