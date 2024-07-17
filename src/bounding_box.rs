@@ -12,47 +12,74 @@ enum Direction {
 }
 
 pub fn find_horizontal_lines(image: &DynamicImage) -> Vec<Vec<(u32, u32)>> {
-    let mut horizontal_lines = vec![Vec::new(); image.height() as usize];
-    for y in 0..image.height() {
-        let mut current_color = image.get_pixel(0, y);
-        let mut start_x = 0;
-        for x in 1..image.width() {
-            let color = image.get_pixel(x, y);
-            if color != current_color || x == image.width()-1 {
-                // if length is greater than 10
-                if x - start_x > 40 {
-                    horizontal_lines[y as usize].push((start_x, x));
+    // with rayon
+    let mapped_lines: Vec<Vec<(u32, u32)>> = (0..image.height()).collect::<Vec<_>>()
+        .par_iter()
+        .map(|index| {
+            let mut lines = Vec::new();
+            let mut current_color = image.get_pixel(0, *index as u32);
+            let mut start_x = 0;
+            for x in 1..image.width() {
+                let color = image.get_pixel(x, *index as u32);
+                if color != current_color || x == image.width()-1 {
+                    // if length is greater than 10
+                    if x - start_x > 40 {
+                        lines.push((start_x, x));
+                    }
+                    
+                    start_x = x;
+                    current_color = color;
                 }
-                
-                start_x = x;
-                current_color = color;
             }
-        }
-    }
+            lines
+         })
+         .collect();
 
-    return horizontal_lines;
+    return mapped_lines;
 }
 
 pub fn find_vertical_lines(image: &DynamicImage) -> Vec<Vec<(u32, u32)>> {
-    let mut vertical_lines = vec![Vec::new(); image.width() as usize];
-    for x in 0..image.width() {
-        let mut current_color = image.get_pixel(x, 0);
-        let mut start_y = 0;
-        for y in 1..image.height() {
-            let color = image.get_pixel(x, y);
-            if color != current_color || y == image.height()-1 {
-                // if length is greater than 10
-                if y - start_y > 20 {
-                    vertical_lines[x as usize].push((start_y, y));
+    // let mut vertical_lines = vec![Vec::new(); image.width() as usize];
+    // for x in 0..image.width() {
+    //     let mut current_color = image.get_pixel(x, 0);
+    //     let mut start_y = 0;
+    //     for y in 1..image.height() {
+    //         let color = image.get_pixel(x, y);
+    //         if color != current_color || y == image.height()-1 {
+    //             // if length is greater than 10
+    //             if y - start_y > 20 {
+    //                 vertical_lines[x as usize].push((start_y, y));
+    //             }
+    //             
+    //             start_y = y;
+    //             current_color = color;
+    //         }
+    //     }
+    // }
+    
+    let mapped_lines = (0..image.width()).collect::<Vec<_>>()
+        .par_iter()
+        .map(|index| {
+            let mut lines = Vec::new();
+            let mut current_color = image.get_pixel(*index as u32, 0);
+            let mut start_y = 0;
+            for y in 1..image.height() {
+                let color = image.get_pixel(*index as u32, y);
+                if color != current_color || y == image.height()-1 {
+                    // if length is greater than 10
+                    if y - start_y > 20 {
+                        lines.push((start_y, y));
+                    }
+                    
+                    start_y = y;
+                    current_color = color;
                 }
-                
-                start_y = y;
-                current_color = color;
             }
-        }
-    }
+            lines
+         })
+         .collect();
 
-    return vertical_lines;
+    return mapped_lines;
 }
 
 fn draw_lines(image: &DynamicImage, lines: &Vec<Vec<(u32, u32)>>, direction: Direction, color: image::Rgba<u8>) -> DynamicImage {
@@ -264,7 +291,7 @@ enum EdgeType {
     Before, After, None, Both
 }
 
-fn check_edge(image: &DynamicImage, lines: &Vec<Vec<(u32, u32)>>, direction: Direction) -> Vec<Vec<(u32, u32, EdgeType)>> {
+fn detect_edge_types(image: &DynamicImage, lines: &Vec<Vec<(u32, u32)>>, direction: Direction) -> Vec<Vec<(u32, u32, EdgeType)>> {
     let lines_with_index = lines.iter().enumerate().collect::<Vec<_>>();
     let mapped_lines: Vec<Vec<(u32, u32, EdgeType)>> = lines_with_index
         .par_iter()
@@ -426,9 +453,9 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     }
     println!("Elapsed: {:?}", start_time.elapsed());
     
-    println!("Checking edges");
+    println!("Detect horizontal edge types");
     let start_time = std::time::Instant::now();
-    let horizontal_edges = check_edge(image, &horizontal_lines, Direction::Horizontal);
+    let horizontal_edges = detect_edge_types(image, &horizontal_lines, Direction::Horizontal);
     if write_debug_images {
         // filter to only before lines
         let before_lines = horizontal_edges.iter().map(|x| x.iter().filter(|(_, _, edge_type)| *edge_type == EdgeType::Before).map(|(start, end, _)| (start.clone(), end.clone())).collect::<Vec<_>>()).collect::<Vec<_>>();
@@ -442,8 +469,8 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     }
     println!("Elapsed: {:?}", start_time.elapsed());
 
-    println!("Checking vertical edges");
-    let vertical_edges = check_edge(image, &vertical_lines, Direction::Vertical);
+    println!("Detect vertical edge types");
+    let vertical_edges = detect_edge_types(image, &vertical_lines, Direction::Vertical);
     if write_debug_images {
         // filter to only before lines
         let before_lines = vertical_edges.iter().map(|x| x.iter().filter(|(_, _, edge_type)| *edge_type == EdgeType::Before).map(|(start, end, _)| (start.clone(), end.clone())).collect::<Vec<_>>()).collect::<Vec<_>>();
@@ -745,7 +772,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     let mut small_boxes = Vec::new();
     for (start_x, start_y, end_x, end_y) in filtered_boxes.iter() {
         let max_textfragment_height = 35;
-        let max_textfragment_height_2 = 25;
+        let max_textfragment_height_2 = 35;
         if end_y - start_y > max_textfragment_height {
             big_boxes.push((start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone()));
         } else if end_y - start_y > max_textfragment_height_2 {
@@ -941,7 +968,7 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     // debug_img.save("/tmp/swiftmouse_0_no_children_boxes.png").unwrap();
 
     // drop all big boxes with endx bigger than 70
-    let big_boxes = big_boxes.iter().filter(|(_, _, end_x, _)| *end_x < 70).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
+    // let big_boxes = big_boxes.iter().filter(|(_, _, end_x, _)| *end_x < 70).map(|(start_x, start_y, end_x, end_y)| (start_x.clone(), start_y.clone(), end_x.clone(), end_y.clone())).collect::<Vec<_>>();
 
     if write_debug_images {
         let mut debug_img = image.clone();
@@ -950,9 +977,9 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
             draw_horizontal_line_colored(&mut debug_img, *end_y, *start_x, *end_x, image::Rgba([255, 255, 0, 255]));
             draw_vertical_line_colored(&mut debug_img, *start_x, *start_y, *end_y, image::Rgba([255, 0, 255, 255]));
             draw_vertical_line_colored(&mut debug_img, *end_x, *start_y, *end_y, image::Rgba([0, 255, 255, 255]));
-            // draw greenline at offset
-            let offset = start_y + end_y % 1000;
-            draw_vertical_line_colored(&mut debug_img, *start_x + offset, *start_y, *end_y, image::Rgba([0, 255, 0, 255]));
+            // // draw greenline at offset
+            // let offset = start_y + end_y % 1000;
+            // draw_vertical_line_colored(&mut debug_img, *start_x + offset, *start_y, *end_y, image::Rgba([0, 255, 0, 255]));
         }
         debug_img.save("/tmp/swiftmouse_0_big_boxes_filtered.png").unwrap();
     }
@@ -1077,11 +1104,6 @@ pub fn find_bounding_boxes_v2(image: &DynamicImage) -> (Vec<(u32, u32, u32, u32)
     return (smallboxes, filtered_big_boxes);
 }
 
-fn overlapping_area(start_x_1: &u32, start_y_1: &u32, end_x_1: &u32, end_y_1: &u32, start_x_2: &u32, start_y_2: &u32, end_x_2: &u32, end_y_2: &u32) -> u32 {
-    // Max(0, Min(XA2, XB2) - Max(XA1, XB1)) * Max(0, Min(YA2, YB2) - Max(YA1, YB1))
-    cmp::max(0, cmp::min(*end_x_1, *end_x_2) as i32 - cmp::max(*start_x_1, *start_x_2) as i32) as u32 * cmp::max(0, cmp::min(*end_y_1, *end_y_2) as i32 - cmp::max(*start_y_1, *start_y_2) as i32) as u32
-}
-
 fn draw_horizontal_line_colored(image: &mut DynamicImage, y: u32, start_x: u32, end_x: u32, color: image::Rgba<u8>) {
     for x in start_x..end_x {
         if x >= image.width() {
@@ -1098,144 +1120,4 @@ fn draw_vertical_line_colored(image: &mut DynamicImage, x: u32, start_y: u32, en
         }
         image.put_pixel(x, y, color);
     }
-}
-
-pub fn merge_overlapping_bounding_boxes(bounding_boxes: Vec<(u32, u32, u32, u32)>) -> Vec<(u32, u32, u32, u32)> {
-    let mut merged_bounding_boxes: Vec<(u32, u32, u32, u32)> = Vec::new();
-    let mut visited_list: Vec<bool> = vec![false; bounding_boxes.len()];
-    let mut did_merge = false;
-
-    for (i, bounding_box) in bounding_boxes.iter().enumerate(){
-        if visited_list[i] {
-            continue;
-        }
-        visited_list[i] = true;
-        let mut current_bb = *bounding_box;
-
-        for (j, bounding_box2) in bounding_boxes.iter().enumerate(){
-            if visited_list[j] {
-                continue;
-            }
-            if bounds_overlap(current_bb, *bounding_box2) {
-                visited_list[j] = true;
-                current_bb = merge_bounds(current_bb, *bounding_box2);
-                did_merge = true;
-            }
-        }
-
-        // discard if width and height are less are more than 100
-        if (current_bb.2 - current_bb.0) > 100 && (current_bb.3 - current_bb.1) > 100 {
-            continue;
-        }
-
-        merged_bounding_boxes.push(current_bb);
-    }
-    
-    if did_merge {
-        return merge_overlapping_bounding_boxes(merged_bounding_boxes);
-    } else {
-        return merged_bounding_boxes;
-    }
-}
-
-fn bounds_overlap(a: (u32, u32, u32, u32), b: (u32, u32, u32, u32)) -> bool {
-    let (min_x, min_y, max_x, max_y) = a;
-    let (min_x2, min_y2, max_x2, max_y2) = b;
-    if min_x2 >= min_x && min_y2 >= min_y && max_x2 <= max_x && max_y2 <= max_y {
-        return true;
-    }
-
-    if contains(a, (min_x2, min_y2)) || contains(a, (max_x2, max_y2)) || contains(a, (min_x2, max_y2)) || contains(a, (max_x2, min_y2)) {
-        return true;
-    }
-
-    false
-}
-
-fn contains(a: (u32, u32, u32, u32), b: (u32, u32)) -> bool {
-    let (min_x, min_y, max_x, max_y) = a;
-    let (x, y) = b;
-    if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
-        return true;
-    }
-    false
-}
-
-fn merge_bounds(a: (u32, u32, u32, u32), b: (u32, u32, u32, u32)) -> (u32, u32, u32, u32) {
-    let (min_x, min_y, max_x, max_y) = a;
-    let (min_x2, min_y2, max_x2, max_y2) = b;
-    let min_x = min_x.min(min_x2);
-    let min_y = min_y.min(min_y2);
-    let max_x = max_x.max(max_x2);
-    let max_y = max_y.max(max_y2);
-    (min_x, min_y, max_x, max_y)
-}
-
-fn get_pixel_grayscale(image: &DynamicImage, x: u32, y: u32) -> i32 {
-    let [r,g,b,a] = image.get_pixel(x, y).0;
-    (r as u32 + g as u32 + b as u32) as i32
-}
-
-pub(crate) fn get_bounding_box_flood_fill(image: &DynamicImage, x: u32, y: u32, visited_bitmap: &mut Vec<Vec<bool>>) -> Option<(u32, u32, u32, u32)> {
-    let mut min_x = x;
-    let mut max_x = x;
-    let mut min_y = y;
-    let mut max_y = y;
-
-    let mut open: Vec<(u32, u32)> = Vec::new();
-    open.push((x, y));
-    let mut pixel_count = 0;
-    let mut visited: Vec<(u32, u32)> = Vec::new();
-
-    while let Some((x, y)) = open.pop() {
-        if x >= image.width()-1 as u32 || y >= image.height()-1 as u32 || x <= 1 || y <= 1 {
-            continue;
-        }
-
-        let edge_pixel = get_pixel_grayscale(image, x, y) * 4
-            + -1 * get_pixel_grayscale(image, x, y+1)
-            + -1 * get_pixel_grayscale(image, x-1, y)
-            + -1 * get_pixel_grayscale(image, x+1, y)
-            + -1 * get_pixel_grayscale(image, x, y-1);
-        if edge_pixel < 100 { 
-            continue;
-        }
-
-        // check if pixel is already visited
-        if visited_bitmap[x as usize][y as usize] {
-            continue;
-        }
-        visited_bitmap[x as usize][y as usize] = true;
-
-        if x < min_x {
-            min_x = x;
-        }
-        if x > max_x {
-            max_x = x;
-        }
-        if y < min_y {
-            min_y = y;
-        }
-        if y > max_y {
-            max_y = y;
-        }
-
-        open.push((x+1, y));
-        open.push((x-1, y));
-        open.push((x, y+1));
-        open.push((x, y-1));
-
-        pixel_count += 1;
-        visited.push((x, y));
-
-        if pixel_count > 500 {
-            return None
-        }
-    }
-
-    if pixel_count < 5 {
-        return None
-    }
-
-    Some((min_x, min_y, max_x, max_y))
 }

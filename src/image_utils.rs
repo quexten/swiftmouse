@@ -1,21 +1,21 @@
 use image::{DynamicImage, GenericImage};
 
-pub fn draw_box(image: &mut DynamicImage, min_x: u32, min_y: u32, max_x: u32, max_y: u32, color: image::Rgba<u8>) {
-    for x in min_x..max_x {
-        for y in min_y..max_y {
-            if x >= image.width() || y >= image.height() {
+pub fn draw_box(image: &mut DynamicImage, min_x: usize, min_y: usize, max_x: usize, max_y: usize, color: image::Rgba<u8>) {
+    for x in min_x..(max_x+1) {
+        for y in min_y..(max_y+1) {
+            if x >= image.width() as usize || y >= image.height() as usize {
                 continue;
             }
 
-            if x == min_x || x == max_x-1 || y == min_y || y == max_y-1 {
-                image.put_pixel(x, y, color);
+            if x == min_x || x == max_x || y == min_y || y == max_y {
+                image.put_pixel(x as u32, y as u32, color);
             }
         }
     }
 }
 
-pub fn draw_boxes(image: &mut DynamicImage, boxes: &[(u32, u32, u32, u32)]) {
+pub fn draw_boxes(image: &mut DynamicImage, boxes: &[(usize, usize, usize, usize)], color: image::Rgba<u8>) {
     for (min_x, min_y, max_x, max_y) in boxes {
-        draw_box(image, *min_x, *min_y, *max_x, *max_y, image::Rgba([255, 0, 0, 255]));
+        draw_box(image, *min_x, *min_y, *max_x, *max_y, color);
     }
 }
