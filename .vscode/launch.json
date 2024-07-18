@@ -11,11 +11,11 @@
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=swiftmouse",
+                    "--bin=daemon",
                     "--package=swiftmouse"
                 ],
                 "filter": {
-                    "name": "swiftmouse",
+                    "name": "daemon",
                     "kind": "bin"
                 }
             },
