@@ -1,10 +1,21 @@
-use std::sync::Arc;
+use std::{fmt::format, sync::Arc};
 
 use eframe::egui::{self, InputState};
 
 use crate::autotype::{self, ClickType};
 
 static COLOR_GRAY: egui::Color32 = egui::Color32::from_rgb(100, 100, 100);
+
+// a
+const LETTER_TEXT: u8 = 14;
+// o
+const LETTER_IMAGE: u8 = 0;
+// e
+const LETTER_LINK: u8 = 20;
+// u
+const LETTER_BIG_BOX: u8 = 4;
+// i
+const LETTER_LINE: u8 = 8;
 
 pub fn show_gui(big_boxes: Vec<(u32, u32, u32, u32)>, line_boxes: Vec<(u32, u32, u32, u32)>, small_images: Vec<(u32, u32, u32, u32)>, large_images: Vec<(u32, u32, u32, u32)>, links: Vec<(u32, u32, u32, u32)>, path: String) {
     let mut options = eframe::NativeOptions {
@@ -111,11 +122,25 @@ fn get_index_for_letters(letter1: u8, letter2: u8) -> i32 {
     letter1 * 26 + letter2
 }
 
+fn get_letters_for_index_3(index: i32) -> (u8, u8, u8) {
+    let letter1 = (index / 26 / 26) as u8;
+    let letter2 = (index / 26 % 26) as u8;
+    let letter3 = (index % 26) as u8;
+    (letter1, letter2, letter3)
+}
+
+fn get_index_for_letters_3(letter1: u8, letter2: u8, letter3: u8) -> i32 {
+    let letter1 = letter1 as i32;
+    let letter2 = letter2 as i32;
+    let letter3 = letter3 as i32;
+    letter1 * 26 * 26 + letter2 * 26 + letter3
+}
+
 impl MyApp {
     fn draw_images(&mut self, ui: &mut egui::Ui) {
         // if first letter is i
-        let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == 8;
-        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != 8;
+        let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == LETTER_IMAGE;
+        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != LETTER_IMAGE;
         if is_other_selected {
             return
         }
@@ -164,13 +189,13 @@ impl MyApp {
     fn draw_text_lines(&mut self, ui: &mut egui::Ui) {
         let image_color = egui::Color32::from_rgb(150, 200, 20);
         // let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == 11;
-        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != 12;
+        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != LETTER_TEXT;
         if is_other_selected {
             return
         }
 
         for (index, (start_x, start_y, end_x, end_y)) in self.line_boxes.iter().enumerate() {   
-            let (letter1, letter2) = get_letters_for_index(index as i32);
+            let (letter1, letter2, letter3) = get_letters_for_index_3(index as i32);
             if self.letters_typed.len() > 1 {
                 if self.letters_typed[1] as u8 != letter1 {
                     continue
@@ -179,12 +204,17 @@ impl MyApp {
             if self.letters_typed.len() > 2 {
                 if self.letters_typed[2] as u8 != letter2 {
                     continue
+                }
+            }
+            if self.letters_typed.len() > 3 {
+                if self.letters_typed[3] as u8 != letter3 {
+                    continue
                 } else {
                     self.selected_box = Some((*start_x, *start_y, *end_x, *end_y));
                     continue
                 }
             }
-            if self.letters_typed.len() == 2 {
+            if self.letters_typed.len() == 3 {
                 self.selected_box = None
             }
 
@@ -197,7 +227,7 @@ impl MyApp {
                 egui::Stroke::new(2.0, image_color),
             );
             // if is_selected {
-                let label = format!("{}{}", std::char::from_u32(letter1 as u32 + 65).unwrap(), std::char::from_u32(letter2 as u32 + 65).unwrap());
+                let label = format!("{}{}{}", std::char::from_u32(letter1 as u32 + 65).unwrap(), std::char::from_u32(letter2 as u32 + 65).unwrap(), std::char::from_u32(letter3 as u32 + 65).unwrap());
                 ui.allocate_ui_at_rect(egui::Rect::from_min_max(
                     egui::pos2(*start_x as f32, *start_y as f32),
                     egui::pos2(*start_x as f32 + 100.0, *end_y as f32 + 100.0),
@@ -210,8 +240,8 @@ impl MyApp {
 
     fn draw_big_boxes(&mut self, ui: &mut egui::Ui) {
         let image_color = egui::Color32::from_rgb(150, 0, 150);
-        let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == 1;
-        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != 1;
+        let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == LETTER_BIG_BOX;
+        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != LETTER_BIG_BOX;
         if is_other_selected {
             return
         }
@@ -257,8 +287,8 @@ impl MyApp {
 
     fn draw_links(&mut self, ui: &mut egui::Ui) {
         let image_color = egui::Color32::from_rgb(0, 150, 250);
-        let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == 11;
-        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != 11;
+        let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == LETTER_LINK;
+        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != LETTER_LINK;
         if is_other_selected {
             return
         }
@@ -329,21 +359,20 @@ impl eframe::App for MyApp {
 
                 if i.key_released(egui::Key::Num1) || i.key_released(egui::Key::Enter) {
                     key_to_click = Some(ClickType::Left);
+                } else if i.key_pressed(egui::Key::Num2) {
+                    key_to_click = Some(ClickType::Right);
+                } else if i.key_pressed(egui::Key::Num3) {
+                    key_to_click = Some(ClickType::Middle);
+                } else {
+                    key_to_click = Some(ClickType::Double);
                 }
-                // else if i.key_pressed(egui::Key::Num2) {
-                //     key_to_click = Some(ClickType::Right);
-                // } else if i.key_pressed(egui::Key::Num3) {
-                //     key_to_click = Some(ClickType::Middle);
-                // } else {
-                //     key_to_click = Some(ClickType::Double);
-                // }
             }
             let key = get_key(i);
             match key {
                 Some(key) => {
                     println!("Key pressed: {:?}", key);
                     // max len 3
-                    if self.letters_typed.len() < 3 {
+                    if self.letters_typed.len() < 3 || (self.letters_typed[0] == LETTER_TEXT as u32 && self.letters_typed.len() < 4) {
                         self.letters_typed.append(&mut vec![key as u32]);
                     }
                 }
@@ -425,206 +454,30 @@ impl eframe::App for MyApp {
                     autotype::movemouse(click_x as i32, click_y as i32, width as i32, height as i32).await.unwrap();
                 });
             }
+            ui.allocate_ui_at_rect(egui::Rect::from_min_size(
+                egui::pos2(0.0, 0.0),
+                egui::vec2(200.0, 100.0),
+            ), |ui| {
+                if self.letters_typed.len() == 0 {
+                    return
+                }
+                // combine vec
+                let letters = self.letters_typed.iter().map(|x| std::char::from_u32(*x as u32 + 65).unwrap()).collect::<String>();
+                // color by letter
+                let color = if self.letters_typed[0] == LETTER_IMAGE as u32{
+                    egui::Color32::from_rgb(255, 160, 50)
+                } else if self.letters_typed[0] == LETTER_LINE as u32 {
+                    egui::Color32::from_rgb(150, 200, 20)
+                } else if self.letters_typed[0] == LETTER_BIG_BOX as u32 {
+                    egui::Color32::from_rgb(150, 0, 150)
+                } else if self.letters_typed[0] == LETTER_LINK as u32 {
+                    egui::Color32::from_rgb(0, 150, 250)
+                } else {
+                    COLOR_GRAY
+                };
 
-
-        //     for ((min_x, min_y, max_x, max_y), index) in self.large_images.iter().zip(0..) {
-        //         let box_index = index as u32 + self.line_boxes.len() as u32;
-        //         let (letter1, letter2) = get_letters_for_index(box_index as i32);
-        //         let letter1char = std::char::from_u32(letter1 as u32 + 65).unwrap();
-        //         let letter2char = std::char::from_u32(letter2 as u32 + 65).unwrap();
-
-        //         if self.letters_typed.len() == 0 || self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == letter1 {
-        //             // color magenta if letter2 matches
-        //             let color = if self.letters_typed.len() == 2 && self.letters_typed[1] as u8 == letter2 {
-        //                 // draw half transparent box
-        //                 ui.painter().rect(
-        //                     egui::Rect::from_min_max(
-        //                         egui::pos2(*min_x as f32, *min_y as f32),
-        //                         egui::pos2(*max_x as f32, *max_y as f32),
-        //                     ),
-        //                     0.0,
-        //                     egui::Color32::from_rgba_premultiplied(200, 0, 100, 10),
-        //                     egui::Stroke::default()
-        //                 );
-        //                 egui::Color32::from_rgb(200, 0, 100)
-        //             } else {
-        //                 if self.letters_typed.len() == 2 {
-        //                     egui::Color32::from_rgb(100, 100, 100)
-        //                 } else {
-        //                     egui::Color32::from_rgb(130, 50, 250)
-        //                 }
-        //             };
-        //            ui.painter().rect_stroke(
-        //                 egui::Rect::from_min_max(
-        //                     egui::pos2(*min_x as f32, *min_y as f32),
-        //                     egui::pos2(*max_x as f32, *max_y as f32),
-        //                 ),
-        //                 0.0,
-        //                 egui::Stroke::new(1.0, color),
-        //             );
-                    
-        //             ui.allocate_ui_at_rect(egui::Rect::from_min_max(
-        //                 egui::pos2(*min_x as f32, *min_y as f32),
-        //                 egui::pos2((*min_x + 50) as f32, (*min_y + 50) as f32),
-        //             ), |ui| {
-        //                 ui.label(egui::RichText::new(format!("{}{}", letter1char, letter2char)).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(color));
-        //             });
-        //         }
-        //     }
-
-        //     for ((min_x, min_y, max_x, max_y), index) in self.line_boxes.iter().zip(0..) {
-        //         let box_index = index as u32 + self.line_boxes.len() as u32;
-        //         let (letter1, letter2) = get_letters_for_index(box_index as i32);
-        //         let letter1char = std::char::from_u32(letter1 as u32 + 65).unwrap();
-        //         let letter2char = std::char::from_u32(letter2 as u32 + 65).unwrap();
-
-        //         if self.letters_typed.len() == 0 || self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == letter1 {
-        //             // color magenta if letter2 matches
-        //             let color = if self.letters_typed.len() == 2 && self.letters_typed[1] as u8 == letter2 {
-        //                 // draw half transparent box
-        //                 ui.painter().rect(
-        //                     egui::Rect::from_min_max(
-        //                         egui::pos2(*min_x as f32, *min_y as f32),
-        //                         egui::pos2(*max_x as f32, *max_y as f32),
-        //                     ),
-        //                     0.0,
-        //                     egui::Color32::from_rgba_premultiplied(200, 0, 100, 10),
-        //                     egui::Stroke::default()
-        //                 );
-        //                 egui::Color32::from_rgb(200, 0, 100)
-        //             } else {
-        //                 if self.letters_typed.len() == 2 {
-        //                     egui::Color32::from_rgb(100, 100, 100)
-        //                 } else {
-        //                     egui::Color32::from_rgb(100,250, 10)
-        //                 }
-        //             };
-        //             ui.painter().rect_stroke(
-        //                 egui::Rect::from_min_max(
-        //                     egui::pos2(*min_x as f32, *min_y as f32),
-        //                     egui::pos2(*max_x as f32, *max_y as f32),
-        //                 ),
-        //                 0.0,
-        //                 egui::Stroke::new(1.0, color),
-        //             );
-                    
-        //             ui.allocate_ui_at_rect(egui::Rect::from_min_max(
-        //                 egui::pos2(*min_x as f32, *min_y as f32),
-        //                 egui::pos2((*min_x + 50) as f32, (*min_y + 50) as f32),
-        //             ), |ui| {
-        //                 ui.label(egui::RichText::new(format!("{}{}", letter1char, letter2char)).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(color));
-        //             });
-        //         }
-        //     }
-
-        //     for ((min_x, min_y, max_x, max_y), index) in self.big_boxes.iter().zip(0..) {
-        //         let box_index = index as u32 + self.line_boxes.len() as u32;
-        //         let (letter1, letter2) = get_letters_for_index(box_index as i32);
-        //         let letter1char = std::char::from_u32(letter1 as u32 + 65).unwrap();
-        //         let letter2char = std::char::from_u32(letter2 as u32 + 65).unwrap();
-
-        //         if self.letters_typed.len() == 0 || self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == letter1 {
-        //             // color magenta if letter2 matches
-        //             let color = if self.letters_typed.len() == 2 && self.letters_typed[1] as u8 == letter2 {
-        //                 // draw half transparent box
-        //                 ui.painter().rect(
-        //                     egui::Rect::from_min_max(
-        //                         egui::pos2(*min_x as f32, *min_y as f32),
-        //                         egui::pos2(*max_x as f32, *max_y as f32),
-        //                     ),
-        //                     0.0,
-        //                     egui::Color32::from_rgba_premultiplied(200, 0, 100, 10),
-        //                     egui::Stroke::default()
-        //                 );
-        //                 egui::Color32::from_rgb(200, 0, 100)
-        //             } else {
-        //                 if self.letters_typed.len() == 2 {
-        //                     egui::Color32::from_rgb(100, 100, 100)
-        //                 } else {
-        //                     egui::Color32::from_rgb(250, 80, 50)
-        //                 }
-        //             };
-        //             ui.painter().rect_stroke(
-        //                 egui::Rect::from_min_max(
-        //                     egui::pos2(*min_x as f32, *min_y as f32),
-        //                     egui::pos2(*max_x as f32, *max_y as f32),
-        //                 ),
-        //                 0.0,
-        //                 egui::Stroke::new(1.0, color),
-        //             );
-                    
-        //             ui.allocate_ui_at_rect(egui::Rect::from_min_max(
-        //                 egui::pos2(*min_x as f32, *min_y as f32),
-        //                 egui::pos2((*min_x + 50) as f32, (*min_y + 50) as f32),
-        //             ), |ui| {
-        //                 ui.label(egui::RichText::new(format!("{}{}", letter1char, letter2char)).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(color));
-        //             });
-        //         }
-        //     }
-
-        //     for ((min_x, min_y, max_x, max_y), index) in self.small_images.iter().zip(0..) {
-        //         let (letter1, letter2) = get_letters_for_index(index);
-        //         let letter1char = std::char::from_u32(letter1 as u32 + 65).unwrap();
-        //         let letter2char = std::char::from_u32(letter2 as u32 + 65).unwrap();
-
-        //         if self.letters_typed.len() == 0 || self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == letter1 {
-        //             // color magenta if letter2 matches
-        //             let color = if self.letters_typed.len() == 2 && self.letters_typed[1] as u8 == letter2 {
-        //                 // draw half transparent box
-        //                 ui.painter().rect(
-        //                     egui::Rect::from_min_max(
-        //                         egui::pos2(*min_x as f32, *min_y as f32),
-        //                         egui::pos2(*max_x as f32, *max_y as f32),
-        //                     ),
-        //                     0.0,
-        //                     egui::Color32::from_rgba_premultiplied(200, 0, 100, 10),
-        //                     egui::Stroke::default()
-        //                 );
-        //                 egui::Color32::from_rgb(200, 0, 100)
-        //             } else {
-        //                 if self.letters_typed.len() == 2 {
-        //                     egui::Color32::from_rgb(100, 100, 100)
-        //                 } else {
-        //                     egui::Color32::from_rgb(0, 150, 150)
-        //                 }
-        //             };
-        //             ui.painter().rect_stroke(
-        //                 egui::Rect::from_min_max(
-        //                     egui::pos2(*min_x as f32, *min_y as f32),
-        //                     egui::pos2(*max_x as f32, *max_y as f32),
-        //                 ),
-        //                 0.0,
-        //                 egui::Stroke::new(1.0, color),
-        //             );
-                    
-        //             ui.allocate_ui_at_rect(egui::Rect::from_min_max(
-        //                 egui::pos2(*min_x as f32, *min_y as f32),
-        //                 egui::pos2((*min_x + 50) as f32, (*min_y + 50) as f32),
-        //             ), |ui| {
-        //                 ui.label(egui::RichText::new(format!("{}{}", letter1char, letter2char)).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(color));
-        //             });
-        //         }
-
-                ui.allocate_ui_at_rect(egui::Rect::from_min_size(
-                    egui::pos2(0.0, 0.0),
-                    egui::vec2(200.0, 100.0),
-                ), |ui| {
-                    if self.letters_typed.len() == 0 {
-                        return
-                    }
-                    // combine vec
-                    let letters = self.letters_typed.iter().map(|x| std::char::from_u32(*x as u32 + 65).unwrap()).collect::<String>();
-                    // color by letter
-                    let color = if self.letters_typed[0] == 8 {
-                        egui::Color32::from_rgb(255, 160, 50)
-                    } else if self.letters_typed[0] == 11 {
-                        egui::Color32::from_rgb(150, 200, 20)
-                    } else {
-                        egui::Color32::from_rgb(50, 100, 200)
-                    };
-
-                    ui.label(egui::RichText::new(letters).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(color).size(40.0));
-                });
+                ui.label(egui::RichText::new(letters).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(color).size(40.0));
+            });
         //     }
      });
     }
