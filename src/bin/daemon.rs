@@ -1,18 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(rustdoc::missing_crate_level_docs)]
 
-use core::num;
 use std::cmp;
 use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::Mutex;
 
-use ashpd::desktop::print;
-use image::GenericImage;
-use image::GenericImageView;
+use color_space::Hsv;
+use color_space::Rgb;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
 use rayon::iter::ParallelIterator;
-use rayon::vec;
-use swiftmouse::bounding_box;
 use swiftmouse::image_utils;
 use swiftmouse::screenshot;
 use swiftmouse::globalshortcut;
@@ -51,7 +49,9 @@ async fn main() {
    
     while let Some(_) = rx.recv().await {
         let total_start = std::time::Instant::now();
+        let screenshot_start = std::time::Instant::now();
         let screenshot: image::ImageBuffer<image::Rgb<u8>, Vec<u8>> = screenshot_tool.take_screenshot().await.unwrap();
+        println!("Screenshot Elapsed: {:?}", screenshot_start.elapsed());
         // let dynamic_image = image::DynamicImage::ImageRgb8(screenshot.clone());
         // write to /tmp/screenshot.png
         screenshot.save("/tmp/screenshot.png").unwrap();
@@ -365,6 +365,107 @@ async fn main() {
             line_boxes.push((min_x, min_y, max_x, max_y));
         }
 
+        let unmapped_lines = unmap_downsampled_boxes(&line_boxes);
+        // let imgcpy = Arc::new(Mutex::new(screenshot.clone()));
+        let links = unmapped_lines.par_iter().enumerate().map(|(i, (min_x, min_y, max_x, max_y))| {
+            // let mut imgcpy = screenshot.clone();
+
+            // go through each column, convert each pixel to hsv, and check if it intense. 
+            let mut max_values = vec![false; max_x - min_x];
+            for x in *min_x..*max_x {
+                for y in *min_y..*max_y {
+                    let pixel = screenshot.get_pixel(x as u32, y as u32);
+                    let rgb = Rgb::new(pixel.0[0] as f64, pixel.0[1] as f64, pixel.0[2] as f64);
+                    let hsv = Hsv::from(rgb);
+                    let intensity = hsv.s;
+                    if intensity > 0.5 && hsv.h > 200.0 && hsv.h < 270.0 {
+                        max_values[x - min_x] = true;
+                    }
+                }
+            }
+            // println!("Max values {:?}", max_values);
+            // println!("Box {:?}", (min_x, min_y, max_x, max_y));
+            // // draw box
+            // let mut imgcpy = imgcpy.lock().unwrap(); 
+            // for x in *min_x..*max_x {
+            //     if max_values[x - min_x] {
+            //         imgcpy.put_pixel(x as u32, *min_y as u32, image::rgb([255, 0, 0]));
+            //     } else {
+            //         imgcpy.put_pixel(x as u32, *min_y as u32, image::rgb([0, 255, 0]));
+            //     }
+            // }
+            // create boxes from max values, gap of 5 or more is new box, min length is 15
+            let mut boxes = Vec::new();
+            let mut start = -1;
+            let mut end = -1;
+            let mut gap = 0;
+            for i in 0..max_values.len() {
+                if start == -1 {
+                    if max_values[i] {
+                        start = i as i32;
+                        end = i as i32;
+                        gap = 0;
+                    }
+                } else {
+                    if max_values[i] {
+                        end = i as i32;
+                        gap = 0;
+                    } else {
+                        gap += 1;
+                        if gap >= 15 {
+                            if end - start >= 50 {
+                                boxes.push((start as usize + min_x, *min_y, end as usize + min_x, *max_y));
+                            }
+                            start = -1;
+                            end = -1;
+                        }
+                    }
+                }
+            }
+            // last box
+            if start != -1 && end != -1 && end - start >= 50 {
+                boxes.push((start as usize + min_x, *min_y, end as usize + min_x, *max_y));
+            }
+
+            // filter boxes where the # of max values is less than 70% of the width
+            boxes = boxes.into_iter().filter(|(lmin_x, min_y, lmax_x, max_y)| {
+                let mut white = 0;
+                for x in *lmin_x..*lmax_x {
+                    if max_values[x - min_x] {
+                        white += 1;
+                    }
+                }
+                white as f32 / (lmax_x - lmin_x) as f32 > 0.5
+            }).collect::<Vec<(usize, usize, usize, usize)>>();
+
+            // let boxescpy = boxes.clone();
+            // for (min_x, min_y, max_x, max_y) in boxescpy {
+            //     for x in min_x..max_x {
+            //         imgcpy.put_pixel(x as u32, (min_y + 1) as u32, image::Rgb([0, 0, 255]));
+            //     }
+            // }
+
+            // let name = format!("/tmp/line{}.png", i);
+            // imgcpy.save(name).unwrap();
+
+            boxes
+        }).collect::<Vec<Vec<(usize, usize, usize, usize)>>>().concat();
+        println!("links {:?}", links.len());
+        // let mut scp = screenshot.clone();
+        // for (min_x, min_y, max_x, max_y) in links.clone() {
+        //     for x in min_x..max_x {
+        //         for y in min_y..max_y {
+        //             if x >= scp.width() as usize || y >= scp.height() as usize {
+        //                 continue;
+        //             }
+        //             scp.put_pixel( x as u32, y as u32, image::Rgb([255, 0, 0]));
+        //         }
+        //     }
+        // }
+        // let scp = imgcpy.lock().unwrap();
+        // scp.save("/tmp/links.png").unwrap();
+
+
         let start = std::time::Instant::now();
         // small images are big boxes that are > 50% white
         let mut small_images = Vec::new();
@@ -395,6 +496,7 @@ async fn main() {
         println!("Num ultra large boxes: {:?}", large_images.len());
         println!("Num lines: {:?}", line_boxes.len());
         println!("Num small images: {:?}", small_images.len());
+        println!("Num links: {:?}", links.len());
         println!("Total Elapsed: {:?}", total_start.elapsed());
 
 
@@ -421,6 +523,7 @@ async fn main() {
                 write_boxes(stdin, &unmap_downsampled_boxes(&line_boxes));
                 write_boxes(stdin, &unmap_downsampled_boxes(&small_images));
                 write_boxes(stdin, &unmap_downsampled_boxes(&large_images));
+                write_boxes(stdin, &links);
             }
             None => {
                 println!("[Main] Failed to open stdin");
@@ -455,52 +558,4 @@ fn write_boxes(stdin: &mut std::process::ChildStdin, boxes: &Vec<(usize, usize, 
         stdin.write_u32(Endian::Little, box_.2 as u32).unwrap();
         stdin.write_u32(Endian::Little, box_.3 as u32).unwrap();
     }
-}
-
-async fn run(screenshot: &image::ImageBuffer<image::Rgb<u8>, Vec<u8>>) {
-    println!("[Main] Opening screenshot");
-    let start_time = std::time::Instant::now();
-    screenshot.save(SCREENSHOT_PATH).unwrap();
-    println!("[Main] Elapsed: {:?}", start_time.elapsed());
-
-    println!("[Main] Finding bounding boxes");
-    let start_time = std::time::Instant::now();
-    let dynamic_image = image::DynamicImage::ImageRgb8(screenshot.clone());
-    let (text_boxes, big_boxes)/* bounding_boxes */ = bounding_box::find_bounding_boxes_v2(&dynamic_image);
-    println!("[Main] Elapsed: {:?}", start_time.elapsed());
-    println!("[Main] Found {:?} small boxes and {:?} big boxes", text_boxes.len(), big_boxes.len());
-
-    // std::process::exit(0);
-
-    // binpath
-    let mut binpath = std::env::current_exe().unwrap();
-    binpath.set_file_name("gui");
-    let gui_binpath = binpath.to_str().unwrap();
-    println!("[Main] GUI binpath: {:?}", gui_binpath);
-
-    let mut child = std::process::Command::new(gui_binpath)
-        .stdin(Stdio::piped())
-        .spawn()
-        .unwrap();
-    match child.stdin.as_mut() {
-        Some(stdin) => {
-            // write len of big boxes
-            let big_boxes_len = big_boxes.len() as u32;
-            stdin.write_u32(Endian::Little, big_boxes_len).unwrap();
-            for big_box in big_boxes {
-                // write big boxes
-                stdin.write_u32(Endian::Little, big_box.0).unwrap();
-                stdin.write_u32(Endian::Little, big_box.1).unwrap();
-                stdin.write_u32(Endian::Little, big_box.2).unwrap();
-                stdin.write_u32(Endian::Little, big_box.3).unwrap();
-            }
-        }
-        None => {
-            println!("[Main] Failed to open stdin");
-        }
-    }
-    // wait for proc exit
-    child.wait().unwrap();
-    
-    println!("[Main] GUI closed");
 }

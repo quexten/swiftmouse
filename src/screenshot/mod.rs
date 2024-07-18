@@ -15,12 +15,13 @@ pub struct PipewireCapturer {
 
 impl PipewireCapturer {
     pub async fn take_screenshot(&mut self) -> Result<image::ImageBuffer<image::Rgb<u8>, Vec<u8>>, Box<dyn std::error::Error>> {
+        let start = std::time::Instant::now();
         let mut needs_capture = self.needs_screenshot.lock().await;
+        println!("Elapsed lock: {:?}", start.elapsed());
         *needs_capture = true;
-        println!("Needs capture: {:?}", *needs_capture);
         drop(needs_capture);
-        println!("waiting for screenshot");
         let screenshot = timeout(Duration::from_secs(5), self.image_rx.recv()).await;
+        println!("Elapsed rx: {:?}", start.elapsed());
         match screenshot {
             Ok(res) => {
                 match res {
@@ -43,16 +44,19 @@ impl PipewireCapturer {
 
 pub struct ScreenshotTool {
     pipewire_capturer: Arc<Mutex<Option<PipewireCapturer>>>,
-    heartbeat_rx: Arc<Mutex<Option<tokio::sync::mpsc::Receiver<()>>>>,
+    heartbeat_rx: Arc<Mutex<Arc<Mutex<Option<tokio::sync::mpsc::Receiver<()>>>>>>,
+    closed: Arc<Mutex<bool>>,
 }
 
 impl ScreenshotTool {
 
     pub fn start(&mut self) {
-        let timeout_rx = self.heartbeat_rx.clone();
+        let rx_ama = self.heartbeat_rx.clone();
         let pipewire_capture = self.pipewire_capturer.clone();
+        let closed = self.closed.clone();
         tokio::spawn(async move {
             loop {
+                let timeout_rx = rx_ama.lock().await.clone();
                 let mut timeout_rx_opt = timeout_rx.lock().await;
                 let timeout_rx_opt1 = timeout_rx_opt.borrow_mut();
                 let rx = timeout_rx_opt1.as_mut();
@@ -67,10 +71,7 @@ impl ScreenshotTool {
                                 }
                                 Err(_) => {
                                     println!("[Watchdog] timeout");
-                                    let mut pipewire_capturer = pipewire_capture.lock().await;
-                                    *pipewire_capturer = None;
-                                    let mut timeout_rx = timeout_rx.lock().await;
-                                    *timeout_rx = None;
+                                    close = true;
                                 }
                             }
                         }
@@ -80,14 +81,13 @@ impl ScreenshotTool {
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                 }
-                drop(timeout_rx_opt);
-
                 if close {
                     println!("[Watchdog] Capturer closing");
+                    *timeout_rx_opt = None;
+                    drop(timeout_rx_opt);
                     let mut pipewire_capturer = pipewire_capture.lock().await;
                     *pipewire_capturer = None;
-                    let mut timeout_rx = timeout_rx.lock().await;
-                    *timeout_rx = None;
+                    *closed.lock().await = true;
                     println!("Capturer closed");
                 }
             }
@@ -120,31 +120,34 @@ impl ScreenshotTool {
     }
 
     async fn start_capturer_if_needed(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let heartbeat_rx = self.heartbeat_rx.lock().await;
-        let is_none = heartbeat_rx.is_none();
-        drop(heartbeat_rx);
+        let start = std::time::Instant::now();
+        if self.closed.lock().await.clone() {
+            println!("Capturer stopped, starting: {:?}", start.elapsed());
 
-        println!("Is none: {:?}", is_none);
-        
-        if is_none {
             let (capturer, rx) = self.start_screenshare().await?;
             let mut pipewire_capturer = self.pipewire_capturer.lock().await;
             *pipewire_capturer = Some(capturer);
-            let mut heartbeat_rx = self.heartbeat_rx.lock().await;
-            *heartbeat_rx = Some(rx);
+            *self.heartbeat_rx.lock().await = Arc::new(Mutex::new(Some(rx)));
+            *self.closed.lock().await = false;
         }
+        println!("Capturer started in {:?}", start.elapsed());
 
         return Ok(());
     }
 
     async fn take_screenshot_pipewire(&mut self) -> Result<image::ImageBuffer<image::Rgb<u8>, Vec<u8>>, Box<dyn std::error::Error>> {
         println!("Taking screenshot using pipewire");
+        let start = std::time::Instant::now();
         self.start_capturer_if_needed().await?;
-        println!("Capturer started");
+        println!("Capturer started: {:?}", start.elapsed());
 
+        let start = std::time::Instant::now();
         match self.pipewire_capturer.lock().await.as_mut() {
             Some(capturer) => {
+                println!("Capturer found: {:?}", start.elapsed());
+                let start = std::time::Instant::now();
                 let screenshot = capturer.take_screenshot().await?;
+                println!("Screenshot taken: {:?}", start.elapsed());
                 return Ok(screenshot);
             }
             None => {
@@ -231,6 +234,7 @@ impl ScreenshotTool {
                 if  !should_read {
                     continue;
                 }
+                println!("Read elapsed: {:?}", start.elapsed());
                 last_screenshot_taken = std::time::Instant::now();
                 println!("[Screencapture Thread] Reading frame");
                 let mut should_read = needs_capture.as_ref().lock().await;
@@ -288,7 +292,8 @@ impl ScreenshotTool {
 pub fn get_screenshot_tool() -> ScreenshotTool {
     let mut screenshot_tool = ScreenshotTool {
         pipewire_capturer: Arc::new(Mutex::new(None)),
-        heartbeat_rx: Arc::new(Mutex::new(None)),
+        heartbeat_rx: Arc::new(Mutex::new(Arc::new(Mutex::new(None)))),
+        closed: Arc::new(Mutex::new(true)),
     };
     screenshot_tool.start();
     return screenshot_tool;

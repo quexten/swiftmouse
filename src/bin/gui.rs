@@ -23,10 +23,11 @@ pub async fn main() {
     let line_boxes = read_boxes(&mut stdin);
     let small_images = read_boxes(&mut stdin);
     let large_images = read_boxes(&mut stdin);
+    let links = read_boxes(&mut stdin);
     
     // start autoclick session
     swiftmouse::autotype::start_autoclick_session().await.unwrap();
     // screen width and height
-    swiftmouse::gui::show_gui( big_boxes, line_boxes, small_images, large_images, SCREENSHOT_PATH.to_string());
+    swiftmouse::gui::show_gui( big_boxes, line_boxes, small_images, large_images, links, SCREENSHOT_PATH.to_string());
 
 }

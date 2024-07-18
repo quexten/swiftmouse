@@ -6,7 +6,7 @@ use crate::autotype::{self, ClickType};
 
 static COLOR_GRAY: egui::Color32 = egui::Color32::from_rgb(100, 100, 100);
 
-pub fn show_gui(big_boxes: Vec<(u32, u32, u32, u32)>, line_boxes: Vec<(u32, u32, u32, u32)>, small_images: Vec<(u32, u32, u32, u32)>, large_images: Vec<(u32, u32, u32, u32)>, path: String) {
+pub fn show_gui(big_boxes: Vec<(u32, u32, u32, u32)>, line_boxes: Vec<(u32, u32, u32, u32)>, small_images: Vec<(u32, u32, u32, u32)>, large_images: Vec<(u32, u32, u32, u32)>, links: Vec<(u32, u32, u32, u32)>, path: String) {
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 800.0]),
         ..Default::default()
@@ -22,6 +22,7 @@ pub fn show_gui(big_boxes: Vec<(u32, u32, u32, u32)>, line_boxes: Vec<(u32, u32,
             app.big_boxes = big_boxes;
             app.small_images = small_images;
             app.large_images = large_images;
+            app.links = links;
             app.path = path;
             app.letters_typed = vec![];
             Ok(app)
@@ -35,6 +36,7 @@ struct MyApp {
     big_boxes: Vec<(u32, u32, u32, u32)>,
     small_images: Vec<(u32, u32, u32, u32)>,
     large_images: Vec<(u32, u32, u32, u32)>,
+    links: Vec<(u32, u32, u32, u32)>,
     letters_typed: Vec<u32>,
     selected_box: Option<(u32, u32, u32, u32)>,
     path: String,
@@ -162,7 +164,7 @@ impl MyApp {
     fn draw_text_lines(&mut self, ui: &mut egui::Ui) {
         let image_color = egui::Color32::from_rgb(150, 200, 20);
         // let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == 11;
-        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != 11;
+        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != 12;
         if is_other_selected {
             return
         }
@@ -215,6 +217,53 @@ impl MyApp {
         }
 
         for (index, (start_x, start_y, end_x, end_y)) in self.big_boxes.iter().enumerate() {
+            let (letter1, letter2) = get_letters_for_index(index as i32);
+            if self.letters_typed.len() > 1 {
+                if self.letters_typed[1] as u8 != letter1 {
+                    continue
+                }
+            }
+            if self.letters_typed.len() > 2 {
+                if self.letters_typed[2] as u8 != letter2 {
+                    continue
+                } else {
+                    self.selected_box = Some((*start_x, *start_y, *end_x, *end_y));
+                    continue
+                }
+            }
+            if self.letters_typed.len() == 2 {
+                self.selected_box = None
+            }
+
+            ui.painter().rect_stroke(
+                egui::Rect::from_min_max(
+                    egui::pos2(*start_x as f32, *start_y as f32),
+                    egui::pos2(*end_x as f32, *end_y as f32),
+                ),
+                0.0,
+                egui::Stroke::new(2.0, image_color),
+            );
+            // if is_selected {
+                let label = format!("{}{}", std::char::from_u32(letter1 as u32 + 65).unwrap(), std::char::from_u32(letter2 as u32 + 65).unwrap());
+                ui.allocate_ui_at_rect(egui::Rect::from_min_max(
+                    egui::pos2(*start_x as f32, *start_y as f32),
+                    egui::pos2(*start_x as f32 + 100.0, *end_y as f32 + 100.0),
+                ), |ui| {
+                    ui.label(egui::RichText::new(label).heading().color(egui::Color32::from_rgb(255, 255, 255)).background_color(image_color));
+                });
+            // }
+        }
+    }
+
+    fn draw_links(&mut self, ui: &mut egui::Ui) {
+        let image_color = egui::Color32::from_rgb(0, 150, 250);
+        let is_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 == 11;
+        let is_other_selected = self.letters_typed.len() > 0 && self.letters_typed[0] as u8 != 11;
+        if is_other_selected {
+            return
+        }
+
+        for (index, (start_x, start_y, end_x, end_y)) in self.links.iter().enumerate() {
             let (letter1, letter2) = get_letters_for_index(index as i32);
             if self.letters_typed.len() > 1 {
                 if self.letters_typed[1] as u8 != letter1 {
@@ -345,6 +394,7 @@ impl eframe::App for MyApp {
             self.draw_text_lines(ui);
             self.draw_big_boxes(ui);
             self.draw_images(ui);
+            self.draw_links(ui);
             if self.selected_box.is_some() {
                 let (min_x, min_y, max_x, max_y) = self.selected_box.unwrap();
                 
