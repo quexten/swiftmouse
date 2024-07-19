@@ -1,14 +1,31 @@
 ## Swiftmouse
 
-Swiftmouse is a tool to quickly navigate your screen using only a keyboard. It is inspired by the shortcat app for mac and works by utilizing xdg desktop portal apis, so it works on wayland.
+Swiftmouse is a tool to quickly navigate your screen using only a keyboard. It is inspired by the shortcat app for mac and works by utilizing pipewire, and xdg desktop portal apis / x11 as fallback so it works on most wayland and x11 environments.
+[Screencast from 2024-07-20 01-27-11.webm](https://github.com/user-attachments/assets/ffca1ea5-e0e5-46cb-8b3c-920c5d0642b9)
 
-https://github.com/quexten/swiftmouse/assets/11866552/4fe3c589-a4e5-4766-8f69-4831705292e5
+It is optimized for navigation speed, since this is important to ensure an interactive experience that does not feel
+like there is a layer between you, and the action you intend to do (click a link). For this, low-latency screencapture (pipewire) and
+custom, optimized image processing (fully multithreaded) are used. For a 4k screen, on a Tiger-lake i7 mobile cpu, this takes ~100ms for a 1080p screen
+and 300-400 ms on a 4k screen.
 
 ### Usage
 
+Build the daemon and gui bin's, then:
 ```
-swiftmouse {left/right/middle/double}
+./daemon
 ```
 
-will take a screenshot, use image processing to detect ui elements, and show a ui in fullscreen. You can either enter 2 letters from a label to click on that position, or hit escape to cancel.
-If you want to bind swiftmouse to a shortcut please use whatever facilities your desktop environment provides. Dual screen system are not supported at them moment.
+Bind the following to your DE's custom shortcut facilities:
+```
+dbus-send --print-reply --dest=com.quexten.swiftmouse  /com/quexten/swiftmouse com.quexten.swiftmouse.Run
+```
+
+Then, when the gui is active after you pressed the shortcut:
+```
+a - image
+o - lines
+e - boxes
+u - links
+esc - exit
+enter - left click & exit
+```
