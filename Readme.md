@@ -1,7 +1,9 @@
 ## Swiftmouse
 
 Swiftmouse is a tool to quickly navigate your screen using only a keyboard. It is inspired by the shortcat app for mac and works by utilizing pipewire, and xdg desktop portal apis / x11 as fallback so it works on most wayland and x11 environments.
-[Screencast from 2024-07-20 01-27-11.webm](https://github.com/user-attachments/assets/ffca1ea5-e0e5-46cb-8b3c-920c5d0642b9)
+
+[Screencast from 2024-07-20 01-27-11.webm](https://github.com/user-attachments/assets/6eab652d-91b9-4517-ba60-2133c9ac04cb)
+
 
 It is optimized for navigation speed, since this is important to ensure an interactive experience that does not feel
 like there is a layer between you, and the action you intend to do (click a link). For this, low-latency screencapture (pipewire) and
